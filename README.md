@@ -2,7 +2,7 @@
 
 **OSINT Workbench** is an offline-first Android application for collecting public information, organizing evidence, exploring technical relationships, and exporting readable investigation reports.
 
-> Prototype status: v0.2 development branch. It is not a replacement for Nmap's active network scanning or SpiderFoot's wide plugin ecosystem. This app currently focuses on passive/public sources and selected public APIs.
+> Prototype status: v0.2.0 (versionCode 2), merged into main. It is not a replacement for Nmap's active network scanning or SpiderFoot's wide plugin ecosystem. This app currently focuses on passive/public sources and selected public APIs.
 
 ## What is being added in this iteration
 
@@ -63,7 +63,7 @@ GitHub Actions runs tests, assembles a debug APK, and uploads the `osint-workben
 - A missing security header from one response is only an observation, not proof of a vulnerability.
 - GitHub/Wikidata results are API results. Searches for phones, emails, and many social sites are explicit public web-search links rather than automatic scraping of every platform.
 - Passive recon is not the same as Nmap port scanning or SpiderFoot's many modules; active scanning and broad integrations are not yet included.
-- The new features still require CI validation and a test on a real Android device before calling the iteration fully verified.
+- The feature iteration passed GitHub Actions unit tests and debug APK assembly. Live-source behavior and export/restore flows still need validation on a real Android device.
 
 ## Cumulative context
 See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for decisions, implementation notes, tests, issues, and next steps.

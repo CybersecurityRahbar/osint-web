@@ -55,6 +55,8 @@ import com.cyberphantom.osintworkbench.domain.NewsArticle
 import com.cyberphantom.osintworkbench.domain.NewsSearchResult
 import com.cyberphantom.osintworkbench.domain.PublicProfileResult
 import com.cyberphantom.osintworkbench.domain.PublicResearchEngine
+import com.cyberphantom.osintworkbench.domain.ReconRecord
+import com.cyberphantom.osintworkbench.domain.ScanReport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -74,6 +76,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     var links by remember { mutableStateOf(emptyList<com.cyberphantom.osintworkbench.domain.PublicSearchLink>()) }
     var profiles by remember { mutableStateOf(emptyList<PublicProfileResult>()) }
     var news by remember { mutableStateOf<NewsSearchResult?>(null) }
+    var searchReport by remember { mutableStateOf<ScanReport?>(null) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
@@ -177,21 +180,54 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                 profiles = emptyList()
                                 links = emptyList()
                                 news = null
+                                searchReport = null
+                                val startedAt = System.currentTimeMillis()
                                 try {
                                     if (mode == ResearchMode.NEWS) {
                                         val result = engine.searchNews(query)
                                         news = result
-                                        if (result.articles.isNotEmpty()) {
-                                            withContext(Dispatchers.IO) {
-                                                val queryId = store.upsertEntity(query.trim(), "NEWS_QUERY", "GDELT DOC API", 65)
-                                                result.articles.forEach { article ->
-                                                    val articleId = store.upsertEntity(article.url, "NEWS_ARTICLE", article.domain.ifBlank { "GDELT" }, 75)
-                                                    store.addEdge(articleId, queryId, "MATCHED_NEWS", "GDELT DOC API", 75)
-                                                    store.addFinding(queryId, article.title, "${article.publishedAt} · ${article.url}", "GDELT · ${article.domain}", "info")
-                                                }
-                                            }
-                                            onSaved()
+                                        val records = result.articles.map { article ->
+                                            ReconRecord(
+                                                kind = "NEWS_ARTICLE",
+                                                value = article.title,
+                                                source = article.domain.ifBlank { "GDELT DOC API" },
+                                                sourceUrl = article.url,
+                                                confidence = 78,
+                                                detail = "${article.publishedAt} · ${article.sourceCountry} · ${article.language}".trim()
+                                            )
                                         }
+                                        val reportTarget = "news: ${query.trim()}"
+                                        val report = ScanReport(
+                                            target = reportTarget,
+                                            records = records,
+                                            warnings = listOfNotNull(result.warning),
+                                            startedAt = startedAt,
+                                            finishedAt = System.currentTimeMillis()
+                                        )
+                                        searchReport = report
+                                        withContext(Dispatchers.IO) {
+                                            val queryId = store.upsertEntity(reportTarget, "NEWS_QUERY", "GDELT DOC API", 70)
+                                            result.articles.forEach { article ->
+                                                val articleId = store.upsertEntity(article.url, "NEWS_ARTICLE", article.domain.ifBlank { "GDELT" }, 78)
+                                                store.addEdge(articleId, queryId, "MATCHED_NEWS", "GDELT DOC API", 78)
+                                                store.addFinding(
+                                                    queryId,
+                                                    article.title,
+                                                    "${article.publishedAt} · ${article.url}",
+                                                    "GDELT · ${article.domain}",
+                                                    "info"
+                                                )
+                                            }
+                                            store.addScan(
+                                                target = report.target,
+                                                status = if (report.records.isEmpty()) "no_results" else "completed",
+                                                startedAt = report.startedAt,
+                                                summary = "${report.records.size} articles · GDELT DOC API",
+                                                records = report.records.size,
+                                                payloadJson = report.toJson()
+                                            )
+                                        }
+                                        onSaved()
                                         if (result.warning != null) error = result.warning
                                     } else {
                                         links = engine.buildSearchLinks(query, kind)
@@ -201,17 +237,73 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                                 IdentifierKind.USERNAME -> engine.searchGitHubUsers(query)
                                                 IdentifierKind.PHONE, IdentifierKind.EMAIL -> emptyList()
                                             }
+                                        }.distinctBy { it.url }
+                                        profiles = actualResults
+                                        val warningList = if (actualResults.isEmpty()) {
+                                            listOf(
+                                                if (kind == IdentifierKind.PHONE || kind == IdentifierKind.EMAIL)
+                                                    "لم يتم كشط محركات البحث أو منصات التواصل تلقائياً؛ الروابط أدناه تفتح مزود البحث عند اختيارك."
+                                                else
+                                                    "لم تُعد واجهات GitHub/Wikidata نتيجة مباشرة. الروابط أدناه هي عمليات بحث خارجية لم تُنفّذ تلقائياً."
+                                            )
+                                        } else emptyList()
+                                        val reportTarget = "${kind.label}: ${query.trim()}"
+                                        val records = actualResults.map { profile ->
+                                            ReconRecord(
+                                                kind = "PUBLIC_PROFILE",
+                                                value = "${profile.title} — ${profile.description}",
+                                                source = profile.provider,
+                                                sourceUrl = profile.url,
+                                                confidence = profile.confidence,
+                                                detail = profile.description
+                                            )
                                         }
-                                        profiles = actualResults.distinctBy { it.url }
-                                        if (actualResults.isEmpty() && kind in listOf(IdentifierKind.NAME, IdentifierKind.USERNAME)) {
-                                            error = "لم تُعد واجهات البحث العامة نتائج مباشرة. ما زالت روابط محركات البحث متاحة أدناه؛ عدم ظهور نتيجة لا يعني عدم وجود حساب."
+                                        val report = ScanReport(
+                                            target = reportTarget,
+                                            records = records,
+                                            warnings = warningList,
+                                            startedAt = startedAt,
+                                            finishedAt = System.currentTimeMillis()
+                                        )
+                                        searchReport = report
+                                        withContext(Dispatchers.IO) {
+                                            val queryId = store.upsertEntity(reportTarget, "IDENTIFIER_QUERY", "User supplied query", 100)
+                                            actualResults.forEach { profile ->
+                                                val profileId = store.upsertEntity(profile.url, "PUBLIC_PROFILE", profile.provider, profile.confidence)
+                                                store.addEdge(profileId, queryId, "PUBLIC_PROFILE_RESULT_FOR", profile.provider, profile.confidence)
+                                                store.addFinding(
+                                                    queryId,
+                                                    profile.title,
+                                                    "${profile.description}\n${profile.url}",
+                                                    profile.provider,
+                                                    "info"
+                                                )
+                                            }
+                                            store.addScan(
+                                                target = report.target,
+                                                status = if (report.records.isEmpty()) "no_results" else "completed",
+                                                startedAt = report.startedAt,
+                                                summary = "${report.records.size} API results · ${report.warnings.size} notes",
+                                                records = report.records.size,
+                                                payloadJson = report.toJson()
+                                            )
                                         }
+                                        onSaved()
+                                        if (warningList.isNotEmpty()) error = warningList.first()
                                     }
                                 } catch (exception: Exception) {
                                     error = exception.message ?: "تعذر إكمال البحث. قد يكون المصدر محجوباً أو يحدّ الطلبات."
                                     if (mode == ResearchMode.IDENTIFIERS) {
                                         links = runCatching { engine.buildSearchLinks(query, kind) }.getOrDefault(emptyList())
                                     }
+                                    val failureReport = ScanReport(
+                                        target = if (mode == ResearchMode.NEWS) "news: ${query.trim()}" else "${kind.label}: ${query.trim()}",
+                                        records = emptyList(),
+                                        warnings = listOf(error ?: "فشل البحث"),
+                                        startedAt = startedAt,
+                                        finishedAt = System.currentTimeMillis()
+                                    )
+                                    searchReport = failureReport
                                 } finally {
                                     loading = false
                                 }
@@ -236,9 +328,11 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
             }
         }
 
+        searchReport?.let { ReportQuickActions(it) }
+
         if (mode == ResearchMode.IDENTIFIERS) {
             if (profiles.isNotEmpty()) {
-                ResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
+                ResearchResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
                 profiles.forEach { profile ->
                     PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
                 }

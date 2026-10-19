@@ -350,7 +350,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         val rows = mutableListOf<CaseRow>()
         readableDatabase.rawQuery(
             "SELECT id, title, target, scope, created_at FROM work_cases ORDER BY created_at DESC LIMIT ?",
-            arrayOf(limit.coerceIn(1, 500).toString())
+            arrayOf(limit.coerceIn(1, 10_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += CaseRow(
@@ -369,7 +369,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         val rows = mutableListOf<FindingRow>()
         readableDatabase.rawQuery(
             "SELECT id, entity_id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
-            arrayOf(limit.coerceIn(1, 5_000).toString())
+            arrayOf(limit.coerceIn(1, 50_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += FindingRow(

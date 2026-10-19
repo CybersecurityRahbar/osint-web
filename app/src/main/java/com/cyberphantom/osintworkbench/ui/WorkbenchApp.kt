@@ -966,7 +966,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore) {
             InfoLine("عمليات الجمع", stats.scans.toString())
             InfoLine("الحالات", stats.cases.toString())
         }
-        DataManagementPanel(store)
+        DataManagementPanel(store, onImported = { refreshData() })
         Surface(color = Color(0xFF30291A), shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5A4A2B))) {
             Row(Modifier.padding(15.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 androidx.compose.material3.Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = WorkbenchColors.Amber)

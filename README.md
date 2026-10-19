@@ -2,7 +2,7 @@
 
 **OSINT Workbench** is an offline-first Android application for collecting public information, organizing evidence, exploring technical relationships, and exporting readable investigation reports.
 
-> Prototype status: v0.2.0 (versionCode 2), merged into main. It is not a replacement for Nmap's active network scanning or SpiderFoot's wide plugin ecosystem. This app currently focuses on passive/public sources and selected public APIs.
+> Prototype status: v0.2.0 (versionCode 2). The debug preview installs side-by-side as OSINT Workbench Preview. It is not a replacement for Nmap's active network scanning or SpiderFoot's wide plugin ecosystem. This app currently focuses on passive/public sources and selected public APIs.
 
 ## What is being added in this iteration
 
@@ -46,6 +46,8 @@ Requirements: JDK 17 and Android SDK API 36. Use the included Gradle Wrapper:
 Debug APK path:
 
 `app/build/outputs/apk/debug/app-debug.apk`
+
+The CI debug APK uses application ID `com.cyberphantom.osintworkbench.preview` and label `OSINT Workbench Preview`. It is deliberately separate from `com.cyberphantom.osintworkbench`, so installing the preview will not uninstall the earlier v0.1 app or erase its private database. Release builds retain the base application ID.
 
 GitHub Actions runs tests, assembles a debug APK, and uploads the `osint-workbench-debug-apk` artifact.
 

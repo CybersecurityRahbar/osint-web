@@ -16,6 +16,16 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // CI debug APKs are signed with ephemeral debug keys. Use a separate package ID
+    // so a new preview can be installed alongside an older app without replacing its data.
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+            resValue("string", "app_name", "OSINT Workbench Preview")
+        }
+    }
+
     buildFeatures {
         compose = true
     }

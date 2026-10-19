@@ -145,6 +145,11 @@ ${body()}
         "WEB_TITLE" -> "عنوان الصفحة"
         "SECURITY_HEADER_NOT_OBSERVED" -> "ترويسة أمان غير مرصودة"
         "SUBDOMAIN_OF" -> "نطاق فرعي تابع لـ"
+        "ARCHIVED_VERSION_OF" -> "لقطة أرشيفية"
+        "REGISTRATION_DATA_FOR" -> "بيانات تسجيل عامة للنطاق"
+        "WEB_METADATA_FOR" -> "بيانات الصفحة العامة"
+        "MATCHED_NEWS" -> "مقالة مطابقة لعبارة البحث"
+        "PUBLIC_PROFILE_RESULT_FOR" -> "نتيجة حساب عام لعبارة البحث"
         "OBSERVED_FOR" -> "سجل مرصود للنطاق"
         else -> value.replace('_', ' ')
     }

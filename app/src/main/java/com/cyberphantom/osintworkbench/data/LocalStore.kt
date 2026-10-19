@@ -40,6 +40,14 @@ data class CaseRow(
     val createdAt: Long
 )
 
+data class RelationRow(
+    val fromValue: String,
+    val toValue: String,
+    val relation: String,
+    val source: String,
+    val confidence: Int
+)
+
 /**
  * Small offline-first store. Data remains on this device; no account or backend is required.
  * Values are parameterised to avoid SQL injection. Sensitive exports/encryption are separate
@@ -256,6 +264,29 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                     source = cursor.getString(3),
                     confidence = cursor.getInt(4),
                     updatedAt = cursor.getLong(5)
+                )
+            }
+        }
+        return rows
+    }
+
+    fun relations(limit: Int = 100): List<RelationRow> {
+        val rows = mutableListOf<RelationRow>()
+        readableDatabase.rawQuery(
+            """SELECT source_node.value, target_node.value, edges.relation, edges.source, edges.confidence
+               FROM edges
+               JOIN entities AS source_node ON source_node.id = edges.from_id
+               JOIN entities AS target_node ON target_node.id = edges.to_id
+               ORDER BY edges.observed_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(limit.coerceIn(1, 300).toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += RelationRow(
+                    fromValue = cursor.getString(0),
+                    toValue = cursor.getString(1),
+                    relation = cursor.getString(2),
+                    source = cursor.getString(3),
+                    confidence = cursor.getInt(4)
                 )
             }
         }

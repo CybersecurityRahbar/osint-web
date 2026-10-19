@@ -5,6 +5,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -37,10 +38,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -326,3 +329,105 @@ private fun safeName(raw: String): String =
 private fun formatScanTime(timestamp: Long): String = runCatching {
     SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
 }.getOrDefault("—")
+
+
+@Composable
+fun ReportQuickActions(report: ScanReport) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var htmlText by remember { mutableStateOf(reportHtml(report)) }
+    var jsonText by remember { mutableStateOf(report.toJson()) }
+    var shareAfterSave by remember { mutableStateOf(false) }
+
+    val htmlLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/html")) { uri ->
+        val body = htmlText
+        if (uri != null) {
+            scope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val output = context.contentResolver.openOutputStream(uri) ?: error("Cannot open output")
+                        output.bufferedWriter(Charsets.UTF_8).use { it.write(body) }
+                        true
+                    }.getOrDefault(false)
+                }
+                Toast.makeText(context, if (saved) "تم حفظ تقرير البحث المحدد" else "تعذر حفظ التقرير", Toast.LENGTH_LONG).show()
+                if (saved && shareAfterSave) {
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/html"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    runCatching { context.startActivity(Intent.createChooser(send, "مشاركة تقرير OSINT")) }
+                }
+                shareAfterSave = false
+            }
+        } else shareAfterSave = false
+    }
+
+    val jsonLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val saved = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val output = context.contentResolver.openOutputStream(uri) ?: error("Cannot open output")
+                        output.bufferedWriter(Charsets.UTF_8).use { it.write(jsonText) }
+                        true
+                    }.getOrDefault(false)
+                }
+                Toast.makeText(context, if (saved) "تم حفظ JSON لهذا البحث" else "تعذر حفظ JSON", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    Surface(color = Color(0xFF10282D), shape = RoundedCornerShape(15.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF24534F))) {
+        Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("تقرير هذه العملية فقط", color = WorkbenchColors.Teal, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+            Text(
+                "يمكن حفظ HTML، مشاركته من نافذة Android، أو حفظ JSON بالتفاصيل والمصادر. لن يضم هذا التقرير عمليات البحث الأخرى.",
+                color = WorkbenchColors.TextSecondary,
+                fontSize = 10.sp,
+                lineHeight = 16.sp
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        htmlText = HtmlReportBuilder.scanReport(report)
+                        shareAfterSave = false
+                        htmlLauncher.launch("${safeName(report.target)}-osint-report.html")
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = WorkbenchColors.Teal, contentColor = Color(0xFF06231F))
+                ) {
+                    androidx.compose.material3.Icon(Icons.Filled.SaveAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("حفظ HTML", fontSize = 10.sp)
+                }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        htmlText = HtmlReportBuilder.scanReport(report)
+                        shareAfterSave = true
+                        htmlLauncher.launch("${safeName(report.target)}-osint-report.html")
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    androidx.compose.material3.Icon(Icons.Filled.IosShare, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("حفظ ومشاركة", fontSize = 10.sp)
+                }
+                OutlinedButton(
+                    onClick = {
+                        jsonText = report.toJson()
+                        jsonLauncher.launch("${safeName(report.target)}-osint-report.json")
+                    },
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    androidx.compose.material3.Icon(Icons.Filled.Code, contentDescription = "JSON", modifier = Modifier.size(16.dp))
+                }
+            }
+        }
+    }
+}
+
+private fun reportHtml(report: ScanReport): String = HtmlReportBuilder.scanReport(report)

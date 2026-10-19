@@ -26,7 +26,7 @@
 
 ## Build
 
-Requirements: JDK 17, Android SDK API 37, Android SDK Build Tools 36.0.0, and Gradle 9.8.1.
+Requirements: JDK 17, Android SDK API 36, Android SDK Build Tools 36.0.0, and Gradle 9.8.1.
 
 ```bash
 gradle testDebugUnitTest

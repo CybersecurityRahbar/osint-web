@@ -332,7 +332,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
 
         if (mode == ResearchMode.IDENTIFIERS) {
             if (profiles.isNotEmpty()) {
-                ResearchResearchResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
+                ResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
                 profiles.forEach { profile ->
                     PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
                 }
@@ -507,7 +507,7 @@ private fun ResearchScreenHeading(title: String, subtitle: String, icon: android
 }
 
 @Composable
-private fun ResearchResearchSectionHeader(title: String, subtitle: String) {
+private fun ResearchSectionHeader(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text(subtitle, fontSize = 10.sp, color = WorkbenchColors.TextSecondary)

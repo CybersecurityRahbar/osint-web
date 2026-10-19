@@ -981,7 +981,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: 
                 }
             }
         }
-        Text("OSINT Workbench · 0.1.0 · Prototype", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("OSINT Workbench · 0.2.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

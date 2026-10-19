@@ -48,6 +48,17 @@ data class RelationRow(
     val confidence: Int
 )
 
+data class ScanRow(
+    val id: Long,
+    val target: String,
+    val status: String,
+    val startedAt: Long,
+    val finishedAt: Long,
+    val summary: String,
+    val recordsCount: Int,
+    val payloadJson: String
+)
+
 /**
  * Small offline-first store. Data remains on this device; no account or backend is required.
  * Values are parameterised to avoid SQL injection. Sensitive exports/encryption are separate
@@ -108,7 +119,8 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                 started_at INTEGER NOT NULL,
                 finished_at INTEGER NOT NULL,
                 summary TEXT NOT NULL DEFAULT '',
-                records_count INTEGER NOT NULL DEFAULT 0
+                records_count INTEGER NOT NULL DEFAULT 0,
+                payload_json TEXT NOT NULL DEFAULT ''
             )""".trimIndent()
         )
         db.execSQL(
@@ -127,7 +139,10 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Increment the schema version and add explicit migrations here; never drop user data.
+        // Migrations are additive; existing user data is preserved.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE scans ADD COLUMN payload_json TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     fun upsertEntity(value: String, kind: String, source: String, confidence: Int = 70): Long {
@@ -195,7 +210,14 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         writableDatabase.insert("findings", null, values)
     }
 
-    fun addScan(target: String, status: String, startedAt: Long, summary: String, records: Int) {
+    fun addScan(
+        target: String,
+        status: String,
+        startedAt: Long,
+        summary: String,
+        records: Int,
+        payloadJson: String = ""
+    ) {
         val values = ContentValues().apply {
             put("target", target)
             put("status", status)
@@ -203,6 +225,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             put("finished_at", System.currentTimeMillis())
             put("summary", summary)
             put("records_count", records)
+            put("payload_json", payloadJson)
         }
         writableDatabase.insert("scans", null, values)
     }
@@ -312,8 +335,130 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         return rows
     }
 
+    fun allFindings(limit: Int = 1_000): List<FindingRow> {
+        val rows = mutableListOf<FindingRow>()
+        readableDatabase.rawQuery(
+            "SELECT id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
+            arrayOf(limit.coerceIn(1, 5_000).toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += FindingRow(
+                    id = cursor.getLong(0),
+                    title = cursor.getString(1),
+                    detail = cursor.getString(2),
+                    source = cursor.getString(3),
+                    severity = cursor.getString(4),
+                    observedAt = cursor.getLong(5)
+                )
+            }
+        }
+        return rows
+    }
+
+    fun scans(limit: Int = 20): List<ScanRow> {
+        val rows = mutableListOf<ScanRow>()
+        readableDatabase.rawQuery(
+            """SELECT id, target, status, started_at, finished_at, summary, records_count, payload_json
+               FROM scans ORDER BY started_at DESC LIMIT ?""".trimIndent(),
+            arrayOf(limit.coerceIn(1, 200).toString())
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                rows += ScanRow(
+                    id = cursor.getLong(0),
+                    target = cursor.getString(1),
+                    status = cursor.getString(2),
+                    startedAt = cursor.getLong(3),
+                    finishedAt = cursor.getLong(4),
+                    summary = cursor.getString(5),
+                    recordsCount = cursor.getInt(6),
+                    payloadJson = cursor.getString(7)
+                )
+            }
+        }
+        return rows
+    }
+
+    fun exportSnapshotJson(): String {
+        val root = org.json.JSONObject()
+            .put("format", "OSINT Workbench local workspace export")
+            .put("formatVersion", 1)
+            .put("exportedAt", System.currentTimeMillis())
+        val entityArray = org.json.JSONArray()
+        entities(500).forEach { entity ->
+            entityArray.put(
+                org.json.JSONObject()
+                    .put("id", entity.id)
+                    .put("value", entity.value)
+                    .put("kind", entity.kind)
+                    .put("source", entity.source)
+                    .put("confidence", entity.confidence)
+                    .put("updatedAt", entity.updatedAt)
+            )
+        }
+        val edgeArray = org.json.JSONArray()
+        relations(300).forEach { edge ->
+            edgeArray.put(
+                org.json.JSONObject()
+                    .put("from", edge.fromValue)
+                    .put("to", edge.toValue)
+                    .put("relation", edge.relation)
+                    .put("source", edge.source)
+                    .put("confidence", edge.confidence)
+            )
+        }
+        val findingArray = org.json.JSONArray()
+        allFindings(5_000).forEach { finding ->
+            findingArray.put(
+                org.json.JSONObject()
+                    .put("id", finding.id)
+                    .put("title", finding.title)
+                    .put("detail", finding.detail)
+                    .put("source", finding.source)
+                    .put("severity", finding.severity)
+                    .put("observedAt", finding.observedAt)
+            )
+        }
+        val scanArray = org.json.JSONArray()
+        scans(200).forEach { scan ->
+            scanArray.put(
+                org.json.JSONObject()
+                    .put("id", scan.id)
+                    .put("target", scan.target)
+                    .put("status", scan.status)
+                    .put("startedAt", scan.startedAt)
+                    .put("finishedAt", scan.finishedAt)
+                    .put("summary", scan.summary)
+                    .put("recordsCount", scan.recordsCount)
+                    .put("report", runCatching { org.json.JSONObject(scan.payloadJson) }.getOrNull())
+            )
+        }
+        val caseArray = org.json.JSONArray()
+        cases(500).forEach { item ->
+            caseArray.put(
+                org.json.JSONObject()
+                    .put("id", item.id)
+                    .put("title", item.title)
+                    .put("target", item.target)
+                    .put("scope", item.scope)
+                    .put("createdAt", item.createdAt)
+            )
+        }
+        root.put("entities", entityArray)
+            .put("relationships", edgeArray)
+            .put("findings", findingArray)
+            .put("scans", scanArray)
+            .put("cases", caseArray)
+            .put("counts", org.json.JSONObject()
+                .put("entities", stats().entities)
+                .put("relationships", stats().relationships)
+                .put("findings", stats().findings)
+                .put("scans", stats().scans)
+                .put("cases", stats().cases))
+        return root.toString(2)
+    }
+
     companion object {
         private const val DATABASE_NAME = "osint_workbench.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
     }
 }

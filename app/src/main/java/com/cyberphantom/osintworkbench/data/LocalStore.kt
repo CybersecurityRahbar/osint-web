@@ -20,11 +20,13 @@ data class EntityRow(
     val kind: String,
     val source: String,
     val confidence: Int,
+    val createdAt: Long,
     val updatedAt: Long
 )
 
 data class FindingRow(
     val id: Long,
+    val entityId: Long?,
     val title: String,
     val detail: String,
     val source: String,
@@ -42,10 +44,13 @@ data class CaseRow(
 
 data class RelationRow(
     val fromValue: String,
+    val fromKind: String,
     val toValue: String,
+    val toKind: String,
     val relation: String,
     val source: String,
-    val confidence: Int
+    val confidence: Int,
+    val observedAt: Long
 )
 
 data class ScanRow(
@@ -168,7 +173,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             put("kind", kind)
             put("source", source)
             put("confidence", confidence.coerceIn(0, 100))
-            put("created_at", now)
+            put("created_at", createdAt)
             put("updated_at", now)
         }
         return db.insertOrThrow("entities", null, values)
@@ -179,17 +184,27 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         toId: Long,
         relation: String,
         source: String,
-        confidence: Int = 70
+        confidence: Int = 70,
+        observedAt: Long = System.currentTimeMillis()
     ) {
+        val db = writableDatabase
+        val existing = db.rawQuery(
+            "SELECT id FROM edges WHERE from_id = ? AND to_id = ? AND relation = ? LIMIT 1",
+            arrayOf(fromId.toString(), toId.toString(), relation)
+        ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
         val values = ContentValues().apply {
             put("from_id", fromId)
             put("to_id", toId)
             put("relation", relation)
             put("source", source)
             put("confidence", confidence.coerceIn(0, 100))
-            put("observed_at", System.currentTimeMillis())
+            put("observed_at", observedAt)
         }
-        writableDatabase.insertWithOnConflict("edges", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+        if (existing != null) {
+            db.update("edges", values, "id = ?", arrayOf(existing.toString()))
+        } else {
+            db.insertOrThrow("edges", null, values)
+        }
     }
 
     fun addFinding(
@@ -197,7 +212,8 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         title: String,
         detail: String,
         source: String,
-        severity: String = "info"
+        severity: String = "info",
+        observedAt: Long = System.currentTimeMillis()
     ) {
         val values = ContentValues().apply {
             if (entityId != null) put("entity_id", entityId) else putNull("entity_id")
@@ -205,7 +221,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             put("detail", detail)
             put("source", source)
             put("severity", severity)
-            put("observed_at", System.currentTimeMillis())
+            put("observed_at", observedAt)
         }
         writableDatabase.insert("findings", null, values)
     }
@@ -216,13 +232,14 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         startedAt: Long,
         summary: String,
         records: Int,
-        payloadJson: String = ""
+        payloadJson: String = "",
+        finishedAt: Long = System.currentTimeMillis()
     ) {
         val values = ContentValues().apply {
             put("target", target)
             put("status", status)
             put("started_at", startedAt)
-            put("finished_at", System.currentTimeMillis())
+            put("finished_at", finishedAt)
             put("summary", summary)
             put("records_count", records)
             put("payload_json", payloadJson)
@@ -230,13 +247,13 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         writableDatabase.insert("scans", null, values)
     }
 
-    fun createCase(title: String, target: String, scope: String) {
+    fun createCase(title: String, target: String, scope: String, createdAt: Long = System.currentTimeMillis()) {
         val values = ContentValues().apply {
             put("title", title.trim())
             put("target", target.trim())
             put("scope", scope.trim())
             put("notes", "")
-            put("created_at", System.currentTimeMillis())
+            put("created_at", createdAt)
         }
         writableDatabase.insertOrThrow("work_cases", null, values)
     }
@@ -256,17 +273,18 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
     fun recentFindings(limit: Int = 20): List<FindingRow> {
         val rows = mutableListOf<FindingRow>()
         readableDatabase.rawQuery(
-            "SELECT id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
+            "SELECT id, entity_id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
             arrayOf(limit.coerceIn(1, 100).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += FindingRow(
                     id = cursor.getLong(0),
-                    title = cursor.getString(1),
-                    detail = cursor.getString(2),
-                    source = cursor.getString(3),
-                    severity = cursor.getString(4),
-                    observedAt = cursor.getLong(5)
+                    entityId = if (cursor.isNull(1)) null else cursor.getLong(1),
+                    title = cursor.getString(2),
+                    detail = cursor.getString(3),
+                    source = cursor.getString(4),
+                    severity = cursor.getString(5),
+                    observedAt = cursor.getLong(6)
                 )
             }
         }
@@ -276,7 +294,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
     fun entities(limit: Int = 100): List<EntityRow> {
         val rows = mutableListOf<EntityRow>()
         readableDatabase.rawQuery(
-            "SELECT id, value, kind, source, confidence, updated_at FROM entities ORDER BY updated_at DESC LIMIT ?",
+            "SELECT id, value, kind, source, confidence, created_at, updated_at FROM entities ORDER BY updated_at DESC LIMIT ?",
             arrayOf(limit.coerceIn(1, 500).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
@@ -286,7 +304,8 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                     kind = cursor.getString(2),
                     source = cursor.getString(3),
                     confidence = cursor.getInt(4),
-                    updatedAt = cursor.getLong(5)
+                    createdAt = cursor.getLong(5),
+                    updatedAt = cursor.getLong(6)
                 )
             }
         }
@@ -296,7 +315,8 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
     fun relations(limit: Int = 100): List<RelationRow> {
         val rows = mutableListOf<RelationRow>()
         readableDatabase.rawQuery(
-            """SELECT source_node.value, target_node.value, edges.relation, edges.source, edges.confidence
+            """SELECT source_node.value, source_node.kind, target_node.value, target_node.kind,
+                      edges.relation, edges.source, edges.confidence, edges.observed_at
                FROM edges
                JOIN entities AS source_node ON source_node.id = edges.from_id
                JOIN entities AS target_node ON target_node.id = edges.to_id
@@ -306,10 +326,13 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             while (cursor.moveToNext()) {
                 rows += RelationRow(
                     fromValue = cursor.getString(0),
-                    toValue = cursor.getString(1),
-                    relation = cursor.getString(2),
-                    source = cursor.getString(3),
-                    confidence = cursor.getInt(4)
+                    fromKind = cursor.getString(1),
+                    toValue = cursor.getString(2),
+                    toKind = cursor.getString(3),
+                    relation = cursor.getString(4),
+                    source = cursor.getString(5),
+                    confidence = cursor.getInt(6),
+                    observedAt = cursor.getLong(7)
                 )
             }
         }
@@ -392,6 +415,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                     .put("kind", entity.kind)
                     .put("source", entity.source)
                     .put("confidence", entity.confidence)
+                    .put("createdAt", entity.createdAt)
                     .put("updatedAt", entity.updatedAt)
             )
         }
@@ -400,10 +424,13 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             edgeArray.put(
                 org.json.JSONObject()
                     .put("from", edge.fromValue)
+                    .put("fromKind", edge.fromKind)
                     .put("to", edge.toValue)
+                    .put("toKind", edge.toKind)
                     .put("relation", edge.relation)
                     .put("source", edge.source)
                     .put("confidence", edge.confidence)
+                    .put("observedAt", edge.observedAt)
             )
         }
         val findingArray = org.json.JSONArray()
@@ -411,6 +438,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             findingArray.put(
                 org.json.JSONObject()
                     .put("id", finding.id)
+                    .put("entityId", finding.entityId)
                     .put("title", finding.title)
                     .put("detail", finding.detail)
                     .put("source", finding.source)

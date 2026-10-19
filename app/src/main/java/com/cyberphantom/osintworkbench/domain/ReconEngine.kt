@@ -33,6 +33,60 @@ data class ScanReport(
 ) {
     val elapsedMs: Long get() = (finishedAt - startedAt).coerceAtLeast(0L)
     val sourceCount: Int get() = records.map { it.source }.distinct().size
+
+    fun toJson(): String {
+        val root = org.json.JSONObject()
+            .put("schemaVersion", 1)
+            .put("target", target)
+            .put("startedAt", startedAt)
+            .put("finishedAt", finishedAt)
+            .put("warnings", org.json.JSONArray(warnings))
+        val items = org.json.JSONArray()
+        records.forEach { record ->
+            items.put(
+                org.json.JSONObject()
+                    .put("kind", record.kind)
+                    .put("value", record.value)
+                    .put("source", record.source)
+                    .put("sourceUrl", record.sourceUrl)
+                    .put("confidence", record.confidence)
+                    .put("detail", record.detail)
+            )
+        }
+        root.put("records", items)
+        return root.toString(2)
+    }
+
+    companion object {
+        fun fromJson(json: String): ScanReport? = runCatching {
+            val root = org.json.JSONObject(json)
+            val recordsJson = root.optJSONArray("records") ?: org.json.JSONArray()
+            val records = buildList {
+                for (index in 0 until recordsJson.length()) {
+                    val item = recordsJson.optJSONObject(index) ?: continue
+                    add(
+                        ReconRecord(
+                            kind = item.optString("kind"),
+                            value = item.optString("value"),
+                            source = item.optString("source"),
+                            sourceUrl = item.optString("sourceUrl"),
+                            confidence = item.optInt("confidence", 50).coerceIn(0, 100),
+                            detail = item.optString("detail")
+                        )
+                    )
+                }
+            }
+            val warningsJson = root.optJSONArray("warnings") ?: org.json.JSONArray()
+            val warnings = (0 until warningsJson.length()).map { warningsJson.optString(it) }
+            ScanReport(
+                target = root.optString("target"),
+                records = records,
+                warnings = warnings,
+                startedAt = root.optLong("startedAt"),
+                finishedAt = root.optLong("finishedAt")
+            )
+        }.getOrNull()
+    }
 }
 
 class ReconEngine {
@@ -219,7 +273,7 @@ class ReconEngine {
             val roles = entity.optJSONArray("roles") ?: JSONArray()
             val isRegistrar = (0 until roles.length()).any { roles.optString(it).equals("registrar", true) }
             if (!isRegistrar) continue
-            val vcard = entity.optJSONObject("vcardArray")?.optJSONArray(1) ?: continue
+            val vcard = entity.optJSONArray("vcardArray")?.optJSONArray(1) ?: continue
             for (j in 0 until vcard.length()) {
                 val property = vcard.optJSONArray(j) ?: continue
                 if (property.optString(0).equals("fn", true)) {

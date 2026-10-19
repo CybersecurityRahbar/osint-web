@@ -368,17 +368,18 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
     fun allFindings(limit: Int = 1_000): List<FindingRow> {
         val rows = mutableListOf<FindingRow>()
         readableDatabase.rawQuery(
-            "SELECT id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
+            "SELECT id, entity_id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
             arrayOf(limit.coerceIn(1, 5_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += FindingRow(
                     id = cursor.getLong(0),
-                    title = cursor.getString(1),
-                    detail = cursor.getString(2),
-                    source = cursor.getString(3),
-                    severity = cursor.getString(4),
-                    observedAt = cursor.getLong(5)
+                    entityId = if (cursor.isNull(1)) null else cursor.getLong(1),
+                    title = cursor.getString(2),
+                    detail = cursor.getString(3),
+                    source = cursor.getString(4),
+                    severity = cursor.getString(5),
+                    observedAt = cursor.getLong(6)
                 )
             }
         }
@@ -491,6 +492,150 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                 .put("cases", stats().cases))
         return root.toString(2)
     }
+
+
+
+    /**
+     * Restores an OSINT Workbench JSON export into the current private database.
+     * The import is additive and idempotent for entities, edges, findings, scans and cases.
+     * It never deletes existing records.
+     */
+    fun restoreSnapshotJson(json: String): StoreStats {
+        val root = org.json.JSONObject(json)
+        require(root.optInt("formatVersion", -1) == 1 &&
+            root.optString("format") == "OSINT Workbench local workspace export") {
+            "هذا الملف ليس نسخة JSON مدعومة من OSINT Workbench."
+        }
+        val entityIds = mutableMapOf<Long, Long>()
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val entities = root.optJSONArray("entities") ?: org.json.JSONArray()
+            for (index in 0 until entities.length()) {
+                val item = entities.optJSONObject(index) ?: continue
+                val value = item.optString("value").takeIf(String::isNotBlank) ?: continue
+                val kind = item.optString("kind").ifBlank { "IMPORTED" }
+                val newId = upsertEntity(
+                    value = value,
+                    kind = kind,
+                    source = item.optString("source").ifBlank { "JSON restore" },
+                    confidence = item.optInt("confidence", 50),
+                    createdAt = item.optLong("createdAt", System.currentTimeMillis()),
+                    updatedAt = item.optLong("updatedAt", System.currentTimeMillis())
+                )
+                val oldId = item.optLong("id", -1)
+                if (oldId > 0) entityIds[oldId] = newId
+            }
+
+            val edges = root.optJSONArray("relationships") ?: org.json.JSONArray()
+            for (index in 0 until edges.length()) {
+                val item = edges.optJSONObject(index) ?: continue
+                val fromValue = item.optString("from")
+                val toValue = item.optString("to")
+                val relation = item.optString("relation")
+                if (fromValue.isBlank() || toValue.isBlank() || relation.isBlank()) continue
+                val fromKind = item.optString("fromKind")
+                val toKind = item.optString("toKind")
+                val fromId = findEntityId(fromValue, fromKind) ?: continue
+                val toId = findEntityId(toValue, toKind) ?: continue
+                addEdge(
+                    fromId = fromId,
+                    toId = toId,
+                    relation = relation,
+                    source = item.optString("source").ifBlank { "JSON restore" },
+                    confidence = item.optInt("confidence", 50),
+                    observedAt = item.optLong("observedAt", System.currentTimeMillis())
+                )
+            }
+
+            val findings = root.optJSONArray("findings") ?: org.json.JSONArray()
+            for (index in 0 until findings.length()) {
+                val item = findings.optJSONObject(index) ?: continue
+                val oldEntityId = item.optLong("entityId", -1)
+                val entityId = if (oldEntityId > 0) entityIds[oldEntityId] else null
+                val title = item.optString("title")
+                val detail = item.optString("detail")
+                val source = item.optString("source").ifBlank { "JSON restore" }
+                val observedAt = item.optLong("observedAt", System.currentTimeMillis())
+                if (title.isBlank() || findingExists(entityId, title, detail, source, observedAt)) continue
+                addFinding(
+                    entityId = entityId,
+                    title = title,
+                    detail = detail,
+                    source = source,
+                    severity = item.optString("severity", "info"),
+                    observedAt = observedAt
+                )
+            }
+
+            val scans = root.optJSONArray("scans") ?: org.json.JSONArray()
+            for (index in 0 until scans.length()) {
+                val item = scans.optJSONObject(index) ?: continue
+                val target = item.optString("target")
+                val startedAt = item.optLong("startedAt", System.currentTimeMillis())
+                if (target.isBlank() || scanExists(target, startedAt)) continue
+                val report = item.optJSONObject("report")
+                addScan(
+                    target = target,
+                    status = item.optString("status", "restored"),
+                    startedAt = startedAt,
+                    summary = item.optString("summary", "Imported from JSON"),
+                    records = item.optInt("recordsCount", report?.optJSONArray("records")?.length() ?: 0),
+                    payloadJson = report?.toString(2).orEmpty(),
+                    finishedAt = item.optLong("finishedAt", startedAt)
+                )
+            }
+
+            val cases = root.optJSONArray("cases") ?: org.json.JSONArray()
+            for (index in 0 until cases.length()) {
+                val item = cases.optJSONObject(index) ?: continue
+                val title = item.optString("title")
+                val target = item.optString("target")
+                val createdAt = item.optLong("createdAt", System.currentTimeMillis())
+                if (title.isBlank() || caseExists(title, target, createdAt)) continue
+                createCase(title, target, item.optString("scope"), createdAt)
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+        return stats()
+    }
+
+    private fun findEntityId(value: String, kind: String): Long? {
+        val sql = if (kind.isBlank()) {
+            "SELECT id FROM entities WHERE value = ? ORDER BY updated_at DESC LIMIT 1"
+        } else {
+            "SELECT id FROM entities WHERE value = ? AND kind = ? LIMIT 1"
+        }
+        val args = if (kind.isBlank()) arrayOf(value) else arrayOf(value, kind)
+        return readableDatabase.rawQuery(sql, args).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getLong(0) else null
+        }
+    }
+
+    private fun findingExists(
+        entityId: Long?,
+        title: String,
+        detail: String,
+        source: String,
+        observedAt: Long
+    ): Boolean = readableDatabase.rawQuery(
+        "SELECT id FROM findings WHERE entity_id IS ? AND title = ? AND detail = ? AND source = ? AND observed_at = ? LIMIT 1",
+        arrayOf(entityId?.toString(), title, detail, source, observedAt.toString())
+    ).use { it.moveToFirst() }
+
+    private fun scanExists(target: String, startedAt: Long): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT id FROM scans WHERE target = ? AND started_at = ? LIMIT 1",
+            arrayOf(target, startedAt.toString())
+        ).use { it.moveToFirst() }
+
+    private fun caseExists(title: String, target: String, createdAt: Long): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT id FROM work_cases WHERE title = ? AND target = ? AND created_at = ? LIMIT 1",
+            arrayOf(title, target, createdAt.toString())
+        ).use { it.moveToFirst() }
 
     companion object {
         private const val DATABASE_NAME = "osint_workbench.db"

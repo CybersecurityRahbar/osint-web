@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.Timeline
+import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -107,7 +108,8 @@ private enum class WorkbenchTab(val title: String, val icon: ImageVector) {
     RECON("الاستطلاع", Icons.Filled.Search),
     GRAPH("العلاقات", Icons.Filled.AccountTree),
     CASES("الحالات", Icons.Filled.FolderOpen),
-    SETTINGS("الإعدادات", Icons.Filled.Settings)
+    SETTINGS("الإعدادات", Icons.Filled.Settings),
+    SEARCH("بحث", Icons.Filled.TravelExplore)
 }
 
 @Composable
@@ -206,7 +208,8 @@ fun WorkbenchApp() {
                     store = store,
                     onSaved = { refreshData() }
                 )
-                WorkbenchTab.SETTINGS -> SettingsScreen(stats = stats)
+                WorkbenchTab.SETTINGS -> SettingsScreen(stats = stats, store = store)
+                WorkbenchTab.SEARCH -> PublicResearchScreen(store = store, onSaved = { refreshData() })
             }
         }
     }
@@ -476,6 +479,7 @@ private fun SectionHeader(title: String, subtitle: String) {
 private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
     var domain by rememberSaveable { mutableStateOf("") }
     var includeCt by rememberSaveable { mutableStateOf(true) }
+    var includeAdvanced by rememberSaveable { mutableStateOf(true) }
     var scanning by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<ScanReport?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -523,6 +527,16 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                         Text("مصدر Certificate Transparency العام", fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = includeAdvanced, onCheckedChange = { includeAdvanced = it })
+                    Column(Modifier.weight(1f)) {
+                        Text("توسيع جمع المعلومات", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("RDAP والتواريخ والأرشيف وتحليل رؤوس HTTPS", fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
+                    }
+                }
                 if (error != null) {
                     Text(error.orEmpty(), color = WorkbenchColors.Red, fontSize = 12.sp)
                 }
@@ -533,7 +547,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                             error = null
                             report = null
                             try {
-                                val result = ReconEngine().scanDomain(domain, includeCt)
+                                val result = ReconEngine().scanDomain(domain, includeCt, includeAdvanced)
                                 withContext(Dispatchers.IO) {
                                     val rootId = store.upsertEntity(result.target, "DOMAIN", "User supplied", 100)
                                     result.records.forEach { item ->
@@ -542,7 +556,13 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         store.addEdge(
                                             fromId = nodeId,
                                             toId = rootId,
-                                            relation = if (item.kind == "SUBDOMAIN") "SUBDOMAIN_OF" else "OBSERVED_FOR",
+                                            relation = when (item.kind) {
+                                                "SUBDOMAIN" -> "SUBDOMAIN_OF"
+                                                "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
+                                                "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED", "RDAP_REGISTRAR" -> "REGISTRATION_DATA_FOR"
+                                                "HTTPS_STATUS", "HTTPS_REDIRECT", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY", "TECH_META_GENERATOR", "WEB_TITLE", "SECURITY_HEADER_NOT_OBSERVED" -> "WEB_METADATA_FOR"
+                                                else -> "OBSERVED_FOR"
+                                            },
                                             source = item.source,
                                             confidence = item.confidence
                                         )
@@ -561,8 +581,9 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         target = result.target,
                                         status = if (result.records.isEmpty()) "no_results" else "completed",
                                         startedAt = result.startedAt,
-                                        summary = "${result.records.size} records · ${result.warnings.size} warnings",
-                                        records = result.records.size
+                                        summary = "${result.records.size} records · ${result.sourceCount} sources · ${result.warnings.size} warnings",
+                                        records = result.records.size,
+                                        payloadJson = result.toJson()
                                     )
                                 }
                                 report = result
@@ -597,13 +618,14 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                     CircularProgressIndicator(Modifier.size(22.dp), color = WorkbenchColors.Teal, strokeWidth = 2.dp)
                     Column {
                         Text("جلب المعلومات من المصادر العامة", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                        Text("تُرسل طلبات DNS بالتوازي لتقليل وقت الانتظار.", color = WorkbenchColors.TextSecondary, fontSize = 11.sp)
+                        Text("يستخدم محاولات DNS بديلة، ويجمع RDAP وWayback وبيانات HTTPS الاختيارية.", color = WorkbenchColors.TextSecondary, fontSize = 11.sp)
                     }
                 }
             }
         }
         report?.let { result ->
             ScanSummaryCard(result)
+            ReportQuickActions(report = result)
             if (result.records.isNotEmpty()) {
                 SectionHeader("النتائج المكتشفة", "${result.records.size} نتيجة محفوظة في قاعدة البيانات المحلية")
                 result.records.forEach { record ->
@@ -891,7 +913,7 @@ private fun CasesScreen(cases: List<CaseRow>, store: LocalStore, onSaved: () -> 
 }
 
 @Composable
-private fun SettingsScreen(stats: StoreStats) {
+private fun SettingsScreen(stats: StoreStats, store: LocalStore) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -916,6 +938,7 @@ private fun SettingsScreen(stats: StoreStats) {
             InfoLine("عمليات الجمع", stats.scans.toString())
             InfoLine("الحالات", stats.cases.toString())
         }
+        DataManagementPanel(store)
         Surface(color = Color(0xFF30291A), shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5A4A2B))) {
             Row(Modifier.padding(15.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 androidx.compose.material3.Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = WorkbenchColors.Amber)

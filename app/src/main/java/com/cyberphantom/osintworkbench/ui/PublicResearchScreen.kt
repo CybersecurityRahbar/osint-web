@@ -208,7 +208,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                         withContext(Dispatchers.IO) {
                                             val queryId = store.upsertEntity(reportTarget, "NEWS_QUERY", "GDELT DOC API", 70)
                                             result.articles.forEach { article ->
-                                                val articleId = store.upsertEntity(article.url, "NEWS_ARTICLE", article.domain.ifBlank { "GDELT" }, 78)
+                                                val articleId = store.upsertEntity("${article.title} · ${article.domain.ifBlank { "GDELT" }}", "NEWS_ARTICLE", article.domain.ifBlank { "GDELT" }, 78)
                                                 store.addEdge(articleId, queryId, "MATCHED_NEWS", "GDELT DOC API", 78)
                                                 store.addFinding(
                                                     queryId,
@@ -269,7 +269,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                         withContext(Dispatchers.IO) {
                                             val queryId = store.upsertEntity(reportTarget, "IDENTIFIER_QUERY", "User supplied query", 100)
                                             actualResults.forEach { profile ->
-                                                val profileId = store.upsertEntity(profile.url, "PUBLIC_PROFILE", profile.provider, profile.confidence)
+                                                val profileId = store.upsertEntity("${profile.title} · ${profile.provider}", "PUBLIC_PROFILE", profile.provider, profile.confidence)
                                                 store.addEdge(profileId, queryId, "PUBLIC_PROFILE_RESULT_FOR", profile.provider, profile.confidence)
                                                 store.addFinding(
                                                     queryId,

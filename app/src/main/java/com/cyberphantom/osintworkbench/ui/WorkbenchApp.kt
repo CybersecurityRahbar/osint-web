@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -388,8 +387,7 @@ private fun HeroCard(onOpenRecon: () -> Unit) {
                 }
             }
             Text(
-                "اربط الإشارات.
-اكتشف الصورة الأكبر.",
+                "اربط الإشارات.\nاكتشف الصورة الأكبر.",
                 fontSize = 27.sp,
                 lineHeight = 34.sp,
                 fontWeight = FontWeight.ExtraBold,

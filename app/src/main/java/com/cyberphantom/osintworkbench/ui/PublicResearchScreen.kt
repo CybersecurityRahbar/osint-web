@@ -332,13 +332,13 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
 
         if (mode == ResearchMode.IDENTIFIERS) {
             if (profiles.isNotEmpty()) {
-                ResearchResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
+                ResearchResearchResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
                 profiles.forEach { profile ->
                     PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
                 }
             }
             if (links.isNotEmpty()) {
-                SectionHeader("مصادر بحث إضافية", "تفتح النتائج في المتصفح عند اختيارك")
+                ResearchSectionHeader("مصادر بحث إضافية", "تفتح النتائج في المتصفح عند اختيارك")
                 Surface(
                     color = Color(0xFF282419),
                     shape = RoundedCornerShape(14.dp),
@@ -380,7 +380,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
             }
         } else {
             news?.let { result ->
-                SectionHeader("نتائج الأخبار", "${result.articles.size} مقالة أعادها GDELT")
+                ResearchSectionHeader("نتائج الأخبار", "${result.articles.size} مقالة أعادها GDELT")
                 if (result.warning != null) {
                     Text(result.warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 18.sp)
                 }
@@ -507,7 +507,7 @@ private fun ResearchScreenHeading(title: String, subtitle: String, icon: android
 }
 
 @Composable
-private fun ResearchSectionHeader(title: String, subtitle: String) {
+private fun ResearchResearchSectionHeader(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text(subtitle, fontSize = 10.sp, color = WorkbenchColors.TextSecondary)

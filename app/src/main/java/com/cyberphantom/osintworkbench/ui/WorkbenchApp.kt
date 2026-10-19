@@ -208,7 +208,7 @@ fun WorkbenchApp() {
                     store = store,
                     onSaved = { refreshData() }
                 )
-                WorkbenchTab.SETTINGS -> SettingsScreen(stats = stats, store = store)
+                WorkbenchTab.SETTINGS -> SettingsScreen(stats = stats, store = store, onDataChanged = { refreshData() })
                 WorkbenchTab.SEARCH -> PublicResearchScreen(store = store, onSaved = { refreshData() })
             }
         }
@@ -941,7 +941,7 @@ private fun CasesScreen(cases: List<CaseRow>, store: LocalStore, onSaved: () -> 
 }
 
 @Composable
-private fun SettingsScreen(stats: StoreStats, store: LocalStore) {
+private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -966,7 +966,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore) {
             InfoLine("عمليات الجمع", stats.scans.toString())
             InfoLine("الحالات", stats.cases.toString())
         }
-        DataManagementPanel(store, onImported = { refreshData() })
+        DataManagementPanel(store, onImported = onDataChanged)
         Surface(color = Color(0xFF30291A), shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5A4A2B))) {
             Row(Modifier.padding(15.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 androidx.compose.material3.Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = WorkbenchColors.Amber)

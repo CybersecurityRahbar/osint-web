@@ -281,7 +281,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         val rows = mutableListOf<FindingRow>()
         readableDatabase.rawQuery(
             "SELECT id, entity_id, title, detail, source, severity, observed_at FROM findings ORDER BY observed_at DESC LIMIT ?",
-            arrayOf(limit.coerceIn(1, 100).toString())
+            arrayOf(limit.coerceIn(1, 50_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += FindingRow(
@@ -302,7 +302,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         val rows = mutableListOf<EntityRow>()
         readableDatabase.rawQuery(
             "SELECT id, value, kind, source, confidence, created_at, updated_at FROM entities ORDER BY updated_at DESC LIMIT ?",
-            arrayOf(limit.coerceIn(1, 500).toString())
+            arrayOf(limit.coerceIn(1, 50_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += EntityRow(
@@ -328,7 +328,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                JOIN entities AS source_node ON source_node.id = edges.from_id
                JOIN entities AS target_node ON target_node.id = edges.to_id
                ORDER BY edges.observed_at DESC LIMIT ?""".trimIndent(),
-            arrayOf(limit.coerceIn(1, 300).toString())
+            arrayOf(limit.coerceIn(1, 100_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += RelationRow(
@@ -391,7 +391,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         readableDatabase.rawQuery(
             """SELECT id, target, status, started_at, finished_at, summary, records_count, payload_json
                FROM scans ORDER BY started_at DESC LIMIT ?""".trimIndent(),
-            arrayOf(limit.coerceIn(1, 200).toString())
+            arrayOf(limit.coerceIn(1, 10_000).toString())
         ).use { cursor ->
             while (cursor.moveToNext()) {
                 rows += ScanRow(
@@ -415,7 +415,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             .put("formatVersion", 1)
             .put("exportedAt", System.currentTimeMillis())
         val entityArray = org.json.JSONArray()
-        entities(500).forEach { entity ->
+        entities(50_000).forEach { entity ->
             entityArray.put(
                 org.json.JSONObject()
                     .put("id", entity.id)
@@ -428,7 +428,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             )
         }
         val edgeArray = org.json.JSONArray()
-        relations(300).forEach { edge ->
+        relations(100_000).forEach { edge ->
             edgeArray.put(
                 org.json.JSONObject()
                     .put("from", edge.fromValue)
@@ -442,7 +442,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             )
         }
         val findingArray = org.json.JSONArray()
-        allFindings(5_000).forEach { finding ->
+        allFindings(50_000).forEach { finding ->
             findingArray.put(
                 org.json.JSONObject()
                     .put("id", finding.id)
@@ -455,7 +455,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             )
         }
         val scanArray = org.json.JSONArray()
-        scans(200).forEach { scan ->
+        scans(10_000).forEach { scan ->
             scanArray.put(
                 org.json.JSONObject()
                     .put("id", scan.id)
@@ -469,7 +469,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             )
         }
         val caseArray = org.json.JSONArray()
-        cases(500).forEach { item ->
+        cases(10_000).forEach { item ->
             caseArray.put(
                 org.json.JSONObject()
                     .put("id", item.id)

@@ -150,8 +150,15 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         }
     }
 
-    fun upsertEntity(value: String, kind: String, source: String, confidence: Int = 70): Long {
-        val now = System.currentTimeMillis()
+    fun upsertEntity(
+        value: String,
+        kind: String,
+        source: String,
+        confidence: Int = 70,
+        createdAt: Long = System.currentTimeMillis(),
+        updatedAt: Long = System.currentTimeMillis()
+    ): Long {
+        val now = updatedAt
         val db = writableDatabase
         val existing = db.rawQuery(
             "SELECT id FROM entities WHERE value = ? AND kind = ? LIMIT 1",

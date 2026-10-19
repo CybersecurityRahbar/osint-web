@@ -79,7 +79,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(15.dp)
     ) {
-        ScreenHeading(
+        ResearchScreenHeading(
             "محرك البحث المفتوح",
             "أسماء ومعرّفات عامة وأخبار متعددة المصادر",
             Icons.Filled.PersonSearch
@@ -238,7 +238,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
 
         if (mode == ResearchMode.IDENTIFIERS) {
             if (profiles.isNotEmpty()) {
-                SectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
+                ResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
                 profiles.forEach { profile ->
                     PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
                 }
@@ -388,3 +388,34 @@ private fun researchFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedContainerColor = WorkbenchColors.Background.copy(alpha = 0.40f),
     unfocusedContainerColor = WorkbenchColors.Background.copy(alpha = 0.40f)
 )
+
+
+@Composable
+private fun ResearchScreenHeading(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            Modifier.size(48.dp).clip(RoundedCornerShape(16.dp)).background(
+                androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFF193E47), Color(0xFF29294D)))
+            ),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.material3.Icon(icon, contentDescription = null, tint = WorkbenchColors.Teal, modifier = Modifier.size(25.dp))
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(title, fontSize = 23.sp, fontWeight = FontWeight.ExtraBold)
+            Text(subtitle, color = WorkbenchColors.TextSecondary, fontSize = 12.sp)
+        }
+    }
+}
+
+@Composable
+private fun ResearchSectionHeader(title: String, subtitle: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(subtitle, fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
+    }
+}

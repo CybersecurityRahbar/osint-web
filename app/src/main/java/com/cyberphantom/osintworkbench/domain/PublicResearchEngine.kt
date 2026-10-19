@@ -55,6 +55,18 @@ class PublicResearchEngine {
         val query = rawQuery.trim()
         require(query.isNotBlank()) { "أدخل قيمة للبحث." }
         require(query.length <= 240) { "العبارة طويلة جداً." }
+        when (kind) {
+            IdentifierKind.USERNAME -> require(query.removePrefix("@").matches(Regex("[A-Za-z0-9._-]{1,100}"))) {
+                "اسم المستخدم يجب أن يكون معرّفاً بسيطاً دون مسافات."
+            }
+            IdentifierKind.PHONE -> require(query.count(Char::isDigit) in 7..15) {
+                "أدخل رقماً يحتوي من 7 إلى 15 رقماً؛ لا يستطيع التطبيق تخمين رمز الدولة."
+            }
+            IdentifierKind.EMAIL -> require(query.contains("@") && query.substringAfter("@").contains(".")) {
+                "أدخل عنوان بريد إلكتروني كاملاً."
+            }
+            IdentifierKind.NAME -> Unit
+        }
 
         val quoted = when (kind) {
             IdentifierKind.USERNAME -> query.removePrefix("@").trim()

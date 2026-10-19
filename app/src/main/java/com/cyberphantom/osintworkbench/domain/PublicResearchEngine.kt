@@ -167,17 +167,27 @@ class PublicResearchEngine {
         val raw = try {
             getText(endpoint, 14_000, "application/json")
         } catch (error: Exception) {
+            val fallback = runCatching { searchGoogleNewsRss(clean, maxRecords) }.getOrDefault(emptyList())
             return@withContext NewsSearchResult(
                 clean,
-                emptyList(),
-                "تعذر الوصول إلى مصدر الأخبار. قد تكون الشبكة أو المنطقة تحجب المصدر؛ جرّب الاتصال الآخر أو VPN. التفاصيل: ${error.message ?: "خطأ شبكة"}"
+                fallback,
+                if (fallback.isNotEmpty())
+                    "تعذر GDELT؛ عُرضت نتائج بديلة من Google News RSS. قد تتأثر التغطية واللغة بمصدر الأخبار."
+                else
+                    "تعذر الوصول إلى GDELT وGoogle News RSS. قد تحجب الشبكة أو المنطقة المصدرين؛ جرّب اتصالاً آخر أو VPN. التفاصيل: ${error.message ?: "خطأ شبكة"}"
             )
         }
 
         val root = try {
             JSONObject(raw)
         } catch (_: Exception) {
-            return@withContext NewsSearchResult(clean, emptyList(), "أعاد مصدر الأخبار رداً غير متوقع؛ لا توجد نتائج موثوقة لعرضها.")
+            val fallback = runCatching { searchGoogleNewsRss(clean, maxRecords) }.getOrDefault(emptyList())
+            return@withContext NewsSearchResult(
+                clean,
+                fallback,
+                if (fallback.isNotEmpty()) "استجابة GDELT غير متوقعة؛ استُخدم Google News RSS بديلاً."
+                else "أعاد مصدر الأخبار رداً غير متوقع؛ لم تتوفر نتائج بديلة."
+            )
         }
         val items = root.optJSONArray("articles") ?: org.json.JSONArray()
         val articles = buildList {
@@ -198,13 +208,54 @@ class PublicResearchEngine {
             }
         }.distinctBy { it.url }
 
+        if (articles.isNotEmpty()) return@withContext NewsSearchResult(clean, articles)
+
+        val fallback = runCatching { searchGoogleNewsRss(clean, maxRecords) }.getOrDefault(emptyList())
         NewsSearchResult(
             clean,
-            articles,
-            if (articles.isEmpty()) "لم يعرض GDELT نتائج لهذه العبارة في الاستجابة الحالية؛ هذا لا يعني عدم وجود أخبار."
-            else null
+            fallback,
+            if (fallback.isNotEmpty()) "لم يُعد GDELT نتائج؛ عُرضت نتائج بديلة من Google News RSS."
+            else "لم يعرض GDELT أو Google News RSS نتائج لهذه العبارة. هذا لا يثبت عدم وجود أخبار."
         )
     }
+
+
+    private suspend fun searchGoogleNewsRss(query: String, maxRecords: Int): List<NewsArticle> = withContext(Dispatchers.IO) {
+        val endpoint = "https://news.google.com/rss/search?q=${enc(query)}&hl=ar&gl=YE&ceid=YE:ar"
+        val xml = getText(endpoint, 12_000, "application/rss+xml, application/xml, text/xml")
+        val itemRegex = Regex("(?is)<item\\b[^>]*>(.*?)</item>")
+        val result = itemRegex.findAll(xml).take(maxRecords.coerceIn(1, 50)).mapNotNull { match ->
+            val item = match.groupValues[1]
+            fun tag(name: String): String? = Regex("(?is)<$name(?:\\s+[^>]*)?>(.*?)</$name>")
+                .find(item)?.groupValues?.getOrNull(1)?.trim()
+                ?.replace(Regex("<!\\[CDATA\\[(.*?)\\]\\]>"), "$1")
+                ?.let(::decodeXml)
+                ?.takeIf(String::isNotBlank)
+
+            val title = tag("title") ?: return@mapNotNull null
+            val link = tag("link") ?: return@mapNotNull null
+            if (!link.startsWith("https://")) return@mapNotNull null
+            val domain = runCatching { URL(link).host.removePrefix("www.") }.getOrDefault("")
+            NewsArticle(
+                title = title,
+                url = link,
+                domain = domain,
+                publishedAt = tag("pubDate").orEmpty(),
+                language = "ar",
+                sourceCountry = "YE"
+            )
+        }.toList()
+        result.distinctBy { it.url }
+    }
+
+    private fun decodeXml(value: String): String = value
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#x27;", "'")
 
     private fun getText(endpoint: String, timeoutMs: Int, accept: String): String {
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {

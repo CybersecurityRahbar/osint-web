@@ -224,3 +224,11 @@
 - فشل إعداد SDK القديم `android-actions/setup-android@v3` أيضاً لأنه حاول تثبيت حزمة `tools` التي أزيلت من مستودع Google.
 - **الإصلاح:** الترقية إلى `android-actions/setup-android@v4`، واستخدام Android SDK API 36 المتاح مع Compose BOM `2026.04.01` بدلاً من اشتراط API 37. يبقى AGP 9.4.1 وKotlin 2.4.21 وGradle 9.8.1.
 - لم يُعتبر البناء ناجحاً بعد؛ يجب انتظار نتيجة CI الجديدة، ثم معالجة أخطاء الترجمة إن ظهرت.
+
+
+### تحديث CI — أخطاء ترجمة Kotlin الأولية والإصلاح (2026-10-19)
+- بعد نجاح إعداد Android SDK API 36، وصل GitHub Actions إلى مهمة `compileDebugKotlin` وكشف خطأين في واجهة Compose:
+  1. كان نص العنوان البطولي يحتوي على سطر جديد فعلي داخل سلسلة Kotlin مقتبسة عادية.
+  2. كان هناك استيراد مباشر غير صالح لـ `androidx.compose.foundation.layout.weight`؛ الامتداد متاح ضمن نطاق Row/Column المناسب ولا يحتاج هذا الاستيراد.
+- **الإصلاح:** استبدال فاصل السطر داخل النص بـ `\n` وإزالة الاستيراد الخاطئ. أُضيف Gradle Wrapper الرسمي للإصدار 9.8.1 (ملفات `gradlew`, `gradlew.bat`, `gradle/wrapper/gradle-wrapper.jar`, `gradle-wrapper.properties`) و`.gitignore`. تم تحديث أوامر README إلى `./gradlew`.
+- **حالة التحقق:** يجب إعادة تشغيل CI على الالتزام الجديد. لا يمكن بعد القول إن التطبيق بُني بنجاح أو إن APK جاهز للتنزيل حتى تنتهي الاختبارات وتجميع APK بنجاح.

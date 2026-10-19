@@ -22,7 +22,7 @@ android {
         getByName("debug") {
             applicationIdSuffix = ".preview"
             versionNameSuffix = "-preview"
-            resValue("string", "app_name", "OSINT Workbench Preview")
+            manifestPlaceholders["appLabel"] = "OSINT Workbench Preview"
         }
     }
 

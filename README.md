@@ -26,11 +26,11 @@
 
 ## Build
 
-Requirements: JDK 17, Android SDK API 36, Android SDK Build Tools 36.0.0, and Gradle 9.8.1.
+Requirements: JDK 17 and Android SDK API 36. The Gradle Wrapper downloads Gradle 9.8.1 automatically on first use.
 
 ```bash
-gradle testDebugUnitTest
-gradle assembleDebug
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
 ```
 
 The generated debug APK is:

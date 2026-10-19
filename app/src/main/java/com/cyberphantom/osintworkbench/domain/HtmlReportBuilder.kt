@@ -59,11 +59,11 @@ object HtmlReportBuilder {
 
     fun workspaceReport(store: LocalStore): String {
         val stats = store.stats()
-        val entities = store.entities(500)
-        val relations = store.relations(300)
-        val findings = store.allFindings(500)
-        val scans = store.scans(100)
-        val cases = store.cases(200)
+        val entities = store.entities(50_000)
+        val relations = store.relations(100_000)
+        val findings = store.allFindings(50_000)
+        val scans = store.scans(10_000)
+        val cases = store.cases(10_000)
         return shell("تقرير مساحة العمل", "البيانات المحلية", System.currentTimeMillis()) {
             """
             <section class="hero">

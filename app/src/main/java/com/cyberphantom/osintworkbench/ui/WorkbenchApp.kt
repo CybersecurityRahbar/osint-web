@@ -46,7 +46,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -96,6 +95,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private data class DashboardSnapshot(
+    val stats: StoreStats,
+    val findings: List<FindingRow>,
+    val entities: List<EntityRow>,
+    val relations: List<RelationRow>,
+    val cases: List<CaseRow>
+)
+
 private enum class WorkbenchTab(val title: String, val icon: ImageVector) {
     HOME("الرئيسية", Icons.Filled.Home),
     RECON("الاستطلاع", Icons.Filled.Search),
@@ -117,11 +124,22 @@ fun WorkbenchApp() {
     var cases by remember { mutableStateOf(emptyList<CaseRow>()) }
 
     fun refreshData() {
-        stats = store.stats()
-        findings = store.recentFindings(8)
-        entities = store.entities(100)
-        relations = store.relations(100)
-        cases = store.cases(100)
+        scope.launch {
+            val snapshot = withContext(Dispatchers.IO) {
+                DashboardSnapshot(
+                    stats = store.stats(),
+                    findings = store.recentFindings(8),
+                    entities = store.entities(100),
+                    relations = store.relations(100),
+                    cases = store.cases(100)
+                )
+            }
+            stats = snapshot.stats
+            findings = snapshot.findings
+            entities = snapshot.entities
+            relations = snapshot.relations
+            cases = snapshot.cases
+        }
     }
 
     LaunchedEffect(Unit) { refreshData() }

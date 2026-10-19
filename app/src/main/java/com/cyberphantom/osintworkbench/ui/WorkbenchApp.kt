@@ -714,69 +714,58 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        ScreenHeading("شبكة العلاقات", "الكيانات المرتبطة بأدلة محفوظة", Icons.Filled.AccountTree)
+        ScreenHeading("شبكة العلاقات", "اعرف لماذا ظهر كل ارتباط وعلى أي دليل يعتمد", Icons.Filled.AccountTree)
         Surface(
             color = WorkbenchColors.Surface,
             shape = RoundedCornerShape(22.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
         ) {
-            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    androidx.compose.material3.Icon(Icons.Filled.AccountTree, contentDescription = null, tint = WorkbenchColors.Violet)
-                    Text("خريطة الكيانات", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                }
+            Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
+                Text("كيف تقرأ الخريطة؟", fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Text(
-                    "يُرسم الاتصال من العلاقات المخزنة فعلياً؛ كل خط أدناه يمثل علاقة تم تسجيلها من أحد المصادر.",
+                    "كل مجموعة لها كيان مرجعي (عادة النطاق الذي بحثت عنه). العناصر أسفل منه هي سجلات أو آثار مرصودة مع مصدرها ودرجة ثقتها. هذا ارتباط تقني ناتج من الدليل، وليس إثباتاً لملكية شخص أو علاقة اجتماعية.",
                     color = WorkbenchColors.TextSecondary,
                     fontSize = 11.sp,
-                    lineHeight = 17.sp
+                    lineHeight = 18.sp
                 )
-                if (relations.isEmpty()) {
-                    EmptyState(Icons.Filled.AccountTree, "لا توجد علاقات بعد", "شغّل استطلاع نطاق أولاً كي يتمكن التطبيق من بناء الشبكة من النتائج.")
-                } else {
-                    GraphNetwork(relations = relations)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        SummaryPill("${relations.size} علاقة", WorkbenchColors.Violet)
-                        SummaryPill("${relations.flatMap { listOf(it.fromValue, it.toValue) }.distinct().size} كياناً في الشبكة", WorkbenchColors.Teal)
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SummaryPill("${relations.size} علاقة مسجلة", WorkbenchColors.Violet)
+                    SummaryPill("${relations.flatMap { listOf(it.fromValue, it.toValue) }.distinct().size} كياناً", WorkbenchColors.Teal)
                 }
             }
         }
-        SectionHeader("العلاقات المسجلة", "المصدر ودرجة الثقة محفوظان محلياً")
+
         if (relations.isEmpty()) {
-            EmptyState(Icons.Filled.History, "بانتظار أول نتيجة", "لا توجد معلومات مصطنعة في الرسم؛ سيظهر هنا ما يدعمه دليل.")
+            EmptyState(
+                Icons.Filled.AccountTree,
+                "الشبكة فارغة حتى الآن",
+                "نفّذ استطلاع نطاق أو بحث أخبار أولاً. لن يعرض التطبيق خطوطاً تخمينية بلا مصدر."
+            )
         } else {
-            relations.take(35).forEach { relation ->
-                Surface(color = WorkbenchColors.Surface, shape = RoundedCornerShape(15.dp), border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)) {
-                    Column(Modifier.fillMaxWidth().padding(13.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                        Text(relation.relation.replace('_', ' '), color = WorkbenchColors.Violet, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        Text(relation.fromValue, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            Box(Modifier.width(22.dp).height(1.dp).background(WorkbenchColors.Violet))
-                            Text(relation.toValue, color = WorkbenchColors.TextSecondary, fontSize = 12.sp)
-                        }
-                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                            Text(relation.source, color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
-                            Text("الثقة ${relation.confidence}%", color = WorkbenchColors.Teal, fontSize = 10.sp)
-                        }
-                    }
-                }
-            }
+            GraphNetwork(relations)
         }
+
         if (entities.isNotEmpty()) {
-            SectionHeader("الكيانات المحفوظة", "${entities.size} كياناً في آخر مجموعة")
-            entities.take(12).forEach { entity ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(WorkbenchColors.Surface).padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(9.dp)
+            SectionHeader("مخزن الكيانات", "${entities.size} كياناً في أحدث 100 نتيجة")
+            entities.take(25).forEach { entity ->
+                Surface(
+                    color = WorkbenchColors.Surface,
+                    shape = RoundedCornerShape(13.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
                 ) {
-                    androidx.compose.material3.Icon(Icons.Filled.Public, contentDescription = null, tint = WorkbenchColors.Blue, modifier = Modifier.size(19.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(entity.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        Text(entity.kind, color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        androidx.compose.material3.Icon(Icons.Filled.Public, contentDescription = null, tint = WorkbenchColors.Blue, modifier = Modifier.size(20.dp))
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(entity.value, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            Text(entity.kind.replace('_', ' '), color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                            Text("المصدر: ${entity.source}", color = WorkbenchColors.TextSecondary, fontSize = 9.sp)
+                        }
+                        Text("${entity.confidence}%", color = WorkbenchColors.Teal, fontSize = 10.sp)
                     }
-                    Text("${entity.confidence}%", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
                 }
             }
         }
@@ -785,40 +774,79 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
 
 @Composable
 private fun GraphNetwork(relations: List<RelationRow>) {
-    val visibleRelations = relations.take(24)
-    val nodeNames = visibleRelations.flatMap { listOf(it.fromValue, it.toValue) }.distinct().take(18)
-    Canvas(
-        modifier = Modifier.fillMaxWidth().height(220.dp).clip(RoundedCornerShape(18.dp)).background(Color(0xFF0B1525))
-    ) {
-        if (nodeNames.isEmpty()) return@Canvas
-        val center = Offset(size.width / 2f, size.height / 2f)
-        val radius = minOf(size.width * 0.39f, size.height * 0.38f)
-        val positions = nodeNames.mapIndexed { index, _ ->
-            val angle = (2.0 * Math.PI * index / nodeNames.size) - Math.PI / 2.0
-            Offset(
-                x = center.x + (kotlin.math.cos(angle) * radius).toFloat(),
-                y = center.y + (kotlin.math.sin(angle) * radius).toFloat()
-            )
-        }
-        visibleRelations.forEach { relation ->
-            val from = nodeNames.indexOf(relation.fromValue)
-            val to = nodeNames.indexOf(relation.toValue)
-            if (from >= 0 && to >= 0) {
-                drawLine(
-                    color = WorkbenchColors.Violet.copy(alpha = 0.48f),
-                    start = positions[from],
-                    end = positions[to],
-                    strokeWidth = 1.5.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
+    val groups = relations.take(80).groupBy { it.toValue }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        groups.forEach { (hub, links) ->
+            Surface(
+                color = WorkbenchColors.Surface,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF3B4B68))
+            ) {
+                Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                        Box(
+                            Modifier.size(37.dp).clip(RoundedCornerShape(12.dp)).background(WorkbenchColors.Teal.copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            androidx.compose.material3.Icon(Icons.Filled.Public, contentDescription = null, tint = WorkbenchColors.Teal, modifier = Modifier.size(20.dp))
+                        }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("الكيان المرجعي", color = WorkbenchColors.Teal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(hub, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        }
+                        SummaryPill("${links.size} روابط", WorkbenchColors.Teal)
+                    }
+                    HorizontalDivider(color = WorkbenchColors.Border)
+                    links.forEachIndexed { index, relation ->
+                        Surface(
+                            color = WorkbenchColors.SurfaceElevated,
+                            shape = RoundedCornerShape(13.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber))
+                                    Text(relationDescription(relation.relation), color = WorkbenchColors.Violet, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Text(relation.fromValue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    androidx.compose.material3.Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = WorkbenchColors.TextSecondary, modifier = Modifier.size(14.dp))
+                                    Text("يرتبط بالكيان المرجعي أعلاه", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("الدليل: ${relation.source}", color = WorkbenchColors.TextSecondary, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Text("العلاقة ${index + 1} · مصدر محفوظ", color = WorkbenchColors.TextSecondary, fontSize = 9.sp)
+                                    }
+                                    Text("الثقة ${relation.confidence}%", color = if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        positions.forEachIndexed { index, point ->
-            val nodeColor = if (index == 0) WorkbenchColors.Teal else WorkbenchColors.Blue
-            drawCircle(color = nodeColor.copy(alpha = 0.12f), radius = 13.dp.toPx(), center = point)
-            drawCircle(color = nodeColor, radius = 4.5.dp.toPx(), center = point)
-        }
+        Text(
+            "مهم: درجة الثقة تقدير إرشادي للمصدر وليست احتمالاً إحصائياً. تشابه القيمة أو ورودها في أرشيف لا يثبت أن الأصل يعمل حالياً.",
+            color = WorkbenchColors.TextSecondary,
+            fontSize = 10.sp,
+            lineHeight = 16.sp
+        )
     }
+}
+
+private fun relationDescription(relation: String): String = when (relation) {
+    "SUBDOMAIN_OF" -> "نطاق فرعي موثق ضمن بيانات الشهادات"
+    "ARCHIVED_VERSION_OF" -> "لقطة محفوظة في الأرشيف"
+    "REGISTRATION_DATA_FOR" -> "بيانات تسجيل عامة للنطاق"
+    "WEB_METADATA_FOR" -> "بيانات مستخرجة من استجابة HTTPS"
+    "MATCHED_NEWS" -> "مقالة ظهرت في نتائج البحث الإخباري"
+    "OBSERVED_FOR" -> "سجل مرصود أثناء استطلاع النطاق"
+    else -> relation.replace('_', ' ')
 }
 
 @Composable

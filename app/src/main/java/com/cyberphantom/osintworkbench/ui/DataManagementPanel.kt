@@ -57,7 +57,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun DataManagementPanel(store: LocalStore) {
+fun DataManagementPanel(store: LocalStore, onImported: () -> Unit) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -121,6 +121,36 @@ fun DataManagementPanel(store: LocalStore) {
         }
     }
 
+    val jsonImportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val outcome = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val input = context.contentResolver.openInputStream(uri) ?: error("تعذر فتح ملف النسخة الاحتياطية")
+                        val json = input.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        store.restoreSnapshotJson(json)
+                    }
+                }
+                outcome.onSuccess { restoredStats ->
+                    Toast.makeText(
+                        context,
+                        "تمت الاستعادة. الكيانات: ${restoredStats.entities} · الأدلة: ${restoredStats.findings}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                    onImported()
+                }.onFailure { failure ->
+                    Toast.makeText(
+                        context,
+                        "تعذرت استعادة الملف: ${failure.message ?: "صيغة غير مدعومة"}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
     val dbPath = context.getDatabasePath("osint_workbench.db").absolutePath
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -156,7 +186,14 @@ fun DataManagementPanel(store: LocalStore) {
             }
         }
 
-        DataSectionHeader("تصدير البيانات", "التقرير المنفرد أو كامل مساحة العمل")
+        DataSectionHeader("تصدير واستعادة البيانات", "حفظ نسخة احتياطية أو استعادتها على هذا الجهاز")
+        ExportActionCard(
+            iconLabel = "JSON",
+            title = "استعادة نسخة احتياطية",
+            description = "استيراد نسخة JSON من OSINT Workbench إلى قاعدة البيانات الحالية. تضاف السجلات الجديدة دون حذف البيانات الحالية، وتُتجنب نسخ الأدلة والتقارير المطابقة.",
+            buttonLabel = "اختيار ملف JSON",
+            onClick = { jsonImportLauncher.launch(arrayOf("application/json", "text/json", "text/plain", "*/*")) }
+        )
         ExportActionCard(
             iconLabel = "HTML",
             title = "تقرير مساحة العمل الكامل",

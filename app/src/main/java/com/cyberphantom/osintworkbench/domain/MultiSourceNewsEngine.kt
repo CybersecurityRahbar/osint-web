@@ -1,13 +1,13 @@
 package com.cyberphantom.osintworkbench.domain
 
 import android.util.Xml
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -50,23 +50,16 @@ class MultiSourceNewsEngine {
             val sourceSemaphore = Semaphore(4)
             val tasks = mutableListOf<kotlinx.coroutines.Deferred<SourceOutcome>>()
             tasks += async {
-                runCatching { sourceSemaphore.withPermit { queryGdelt(clean, limit, includeImages) } }.fold(
-                    { SourceOutcome("GDELT", it, null) },
-                    { SourceOutcome("GDELT", emptyList(), it.message ?: "تعذر الوصول") }
-                )
+                runSource(sourceSemaphore, "GDELT") { queryGdelt(clean, limit, includeImages) }
             }
             tasks += async {
-                runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, limit, null, includeImages) } }.fold(
-                    { SourceOutcome("Google News RSS", it, null) },
-                    { SourceOutcome("Google News RSS", emptyList(), it.message ?: "تعذر الوصول") }
-                )
+                runSource(sourceSemaphore, "Google News RSS") { queryGoogleNews(clean, limit, null, includeImages) }
             }
             publishers.forEach { publisher ->
                 tasks += async {
-                    runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, maxOf(5, limit / 2), publisher, includeImages) } }.fold(
-                        { SourceOutcome(publisher.name, it, null) },
-                        { SourceOutcome(publisher.name, emptyList(), it.message ?: "تعذر الوصول") }
-                    )
+                    runSource(sourceSemaphore, publisher.name) {
+                        queryGoogleNews(clean, maxOf(5, limit / 2), publisher, includeImages)
+                    }
                 }
             }
             tasks.awaitAll()
@@ -90,6 +83,25 @@ class MultiSourceNewsEngine {
             else -> null
         }
         NewsSearchResult(clean, articles, warning)
+    }
+
+    private suspend fun runSource(
+        semaphore: Semaphore,
+        source: String,
+        fetch: suspend () -> List<NewsArticle>
+    ): SourceOutcome {
+        semaphore.acquire()
+        try {
+            return try {
+                SourceOutcome(source, fetch(), null)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                SourceOutcome(source, emptyList(), error.message ?: "تعذر الوصول")
+            }
+        } finally {
+            semaphore.release()
+        }
     }
 
     private suspend fun queryGdelt(query: String, maxRecords: Int, includeImages: Boolean): List<NewsArticle> = withContext(Dispatchers.IO) {

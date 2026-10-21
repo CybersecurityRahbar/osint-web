@@ -202,8 +202,12 @@ internal class BroadPublicSearchAdapter {
     private suspend fun bingImages(query: String, limit: Int): List<PublicProfileResult> = withContext(Dispatchers.IO) {
         val q = encode(query)
         val html = fetch("https://www.bing.com/images/search?q=$q&form=HDRSC3", 4_500, "text/html")
+        parseBingImagesHtml(html, limit)
+    }
+
+    internal fun parseBingImagesHtml(html: String, limit: Int = 20): List<PublicProfileResult> {
         val tags = Regex("""(?is)<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*\biusc\b[^"']*["'])[^>]*>""").findAll(html)
-        buildList {
+        return buildList {
             for (match in tags) {
                 val metadataRaw = attr(match.value, "m") ?: continue
                 val metadata = runCatching { JSONObject(clean(metadataRaw)) }.getOrNull() ?: continue

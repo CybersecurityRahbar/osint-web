@@ -254,8 +254,14 @@ class AdvancedPublicSearchEngine {
             }.orEmpty()
             if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
             if (body.isBlank()) throw IllegalStateException("استجابة فارغة من ${URL(endpoint).host}")
-            if (body.contains("anomaly-modal", ignoreCase = true) || body.contains("bot challenge", ignoreCase = true)) {
-                throw IllegalStateException("أعاد مزود البحث تحدي وصول بدلاً من النتائج")
+            val accessChallenge = body.contains("anomaly-modal", ignoreCase = true) ||
+                body.contains("bot challenge", ignoreCase = true) ||
+                body.contains("unusual traffic", ignoreCase = true) ||
+                body.contains("consent.google.com", ignoreCase = true) ||
+                body.contains("verify you are human", ignoreCase = true) ||
+                (body.contains("g-recaptcha", ignoreCase = true) && body.length < 250_000)
+            if (accessChallenge) {
+                throw IllegalStateException("أعاد مزود البحث صفحة تحقق/موافقة بدلاً من قائمة النتائج")
             }
             return body
         } finally {
@@ -528,6 +534,7 @@ class AdvancedPublicSearchEngine {
     private fun unwrapSearchUrl(rawHref: String): String? = runCatching {
         val absolute = when {
             rawHref.startsWith("//") -> "https:$rawHref"
+            rawHref.startsWith("/url?") -> "https://www.google.com$rawHref"
             rawHref.startsWith("/") -> "https://duckduckgo.com$rawHref"
             else -> rawHref
         }

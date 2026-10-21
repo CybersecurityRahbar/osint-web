@@ -533,8 +533,17 @@ class ReconEngine {
                         val region = root.optString("region").takeIf { it.isNotBlank() && it != "null" }
                         val city = root.optString("city").takeIf { it.isNotBlank() && it != "null" }
                         location = listOfNotNull(city, region, country).distinct().joinToString(", ")
-                        isp = root.optJSONObject("connection")?.optString("isp")?.takeIf { it.isNotBlank() && it != "null" }
+                        val connection = root.optJSONObject("connection")
+                        val org = connection?.optString("org")?.takeIf { it.isNotBlank() && it != "null" }
                             ?: root.optString("org").takeIf { it.isNotBlank() && it != "null" }
+                        isp = connection?.optString("isp")?.takeIf { it.isNotBlank() && it != "null" } ?: org
+                        val asn = connection?.optString("asn")?.takeIf { it.isNotBlank() && it != "null" }
+                            ?: root.optString("asn").takeIf { it.isNotBlank() && it != "null" }
+                        val network = listOfNotNull(
+                            org?.takeIf { !it.equals(isp, true) },
+                            isp,
+                            asn?.let { if (it.startsWith("AS", true)) it else "AS$it" }
+                        ).distinct().joinToString(" · ")
                         source = "$provider public IP geolocation"
                         sourceUrl = endpoint
                         break
@@ -546,7 +555,7 @@ class ReconEngine {
                     add(
                         ReconRecord(
                             kind = "IP_GEOLOCATION",
-                            value = "$ip · $location" + (isp?.let { " · $it" } ?: ""),
+                            value = "$ip · $location" + (network.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                             source = source,
                             sourceUrl = sourceUrl,
                             confidence = 42,

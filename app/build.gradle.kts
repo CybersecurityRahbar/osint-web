@@ -9,6 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.cyberphantom.osintworkbench"
+        manifestPlaceholders["appLabel"] = "OSINT Workbench"
         minSdk = 26
         targetSdk = 36
         versionCode = 3

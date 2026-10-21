@@ -216,7 +216,7 @@ class MultiSourceNewsEngine {
         val document = factory.newDocumentBuilder().parse(InputSource(StringReader(xml)))
         val items = document.getElementsByTagName("item")
         return buildList {
-            for (index in 0 until items.length()) {
+            for (index in 0 until items.length) {
                 val item = items.item(index) as? Element ?: continue
                 var title = ""
                 var link = ""

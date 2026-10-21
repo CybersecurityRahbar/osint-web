@@ -371,7 +371,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                 sourceWarnings.forEach { warning -> Text(warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 17.sp) }
             }
             if (profiles.isNotEmpty()) {
-                ResearchSectionHeader("نتائج مباشرة من الويب", "${profiles.size} نتيجة مفهرسة من DuckDuckGo وواجهات عامة")
+                ResearchSectionHeader("نتائج مباشرة من الويب", "${profiles.size} نتيجة مفهرسة من محركات ويب متعددة")
                 profiles.forEach { profile ->
                     PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
                 }

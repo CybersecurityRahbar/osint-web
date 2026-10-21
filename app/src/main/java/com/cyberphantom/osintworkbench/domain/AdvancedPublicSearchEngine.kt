@@ -207,7 +207,8 @@ class AdvancedPublicSearchEngine {
             listOf(
                 SearchEndpoint("DuckDuckGo", "https://html.duckduckgo.com/html/?q=$encoded&kl=wt-wt"),
                 SearchEndpoint("Bing Search", "https://www.bing.com/search?q=$encoded&count=10"),
-                SearchEndpoint("Brave Search", "https://search.brave.com/search?q=$encoded")
+                SearchEndpoint("Google Search", "https://www.google.com/search?q=$encoded&num=10&hl=en"),
+                SearchEndpoint("Yahoo Search", "https://search.yahoo.com/search?p=$encoded")
             )
         } else {
             listOf(
@@ -312,7 +313,21 @@ class AdvancedPublicSearchEngine {
             }
         }
 
-        val blockedHosts = setOf("duckduckgo.com", "bing.com", "search.brave.com", "google.com", "microsoft.com")
+        // Google results wrap external links around h3 headings instead of h2 elements.
+        if (candidates.isEmpty()) {
+            val headingAnchors = Regex("""(?is)<a\b([^>]*)>(.*?)</a>""").findAll(html)
+            for (anchor in headingAnchors) {
+                val inner = anchor.groupValues[2]
+                if (!inner.contains("<h3", ignoreCase = true)) continue
+                val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
+                    .find(anchor.groupValues[1])?.groupValues?.getOrNull(1) ?: continue
+                val title = cleanHtml(inner)
+                if (title.isNotBlank()) candidates += Triple(href, title, "")
+                if (candidates.size >= limit) break
+            }
+        }
+
+        val blockedHosts = setOf("duckduckgo.com", "bing.com", "search.brave.com", "google.com", "search.yahoo.com", "r.search.yahoo.com", "yahoo.com", "microsoft.com")
         return candidates.mapNotNull { (href, title, snippet) ->
             val url = unwrapSearchUrl(href) ?: return@mapNotNull null
             val host = sourceHost(url)
@@ -517,15 +532,34 @@ class AdvancedPublicSearchEngine {
             else -> rawHref
         }
         val uri = URI(absolute)
-        if (uri.host?.endsWith("duckduckgo.com", true) == true && uri.rawQuery != null) {
-            val destination = uri.rawQuery.split('&')
-                .mapNotNull { part ->
-                    val pieces = part.split('=', limit = 2)
-                    if (pieces.size == 2 && pieces[0] == "uddg") URLDecoder.decode(pieces[1], StandardCharsets.UTF_8.name()) else null
-                }.firstOrNull()
-            if (!destination.isNullOrBlank()) destination else absolute
-        } else absolute
-    }.getOrNull()?.takeIf { it.startsWith("https://") && it.length <= 2_048 }
+        val host = uri.host.orEmpty().lowercase(Locale.ROOT)
+        val queryParams = uri.rawQuery.orEmpty().split('&').mapNotNull { part ->
+            val pieces = part.split('=', limit = 2)
+            if (pieces.size == 2) pieces[0] to pieces[1] else null
+        }.toMap()
+        val isDuckDuckGo = host == "duckduckgo.com" || host.endsWith(".duckduckgo.com")
+        val isGoogleRedirect = host.startsWith("google.") || host.contains(".google.") && uri.path == "/url"
+        val isYahooRedirect = host == "r.search.yahoo.com" || host == "search.yahoo.com"
+        val queryDestination = when {
+            isDuckDuckGo -> queryParams["uddg"]
+            isGoogleRedirect -> queryParams["url"] ?: queryParams["q"]
+            isYahooRedirect -> queryParams["url"] ?: queryParams["u"] ?: queryParams["RU"]
+            else -> null
+        }
+        val yahooPathDestination = if (isYahooRedirect) {
+            Regex("""(?:^|/)RU=([^/]+)""").find(uri.rawPath.orEmpty())?.groupValues?.getOrNull(1)
+        } else null
+        val encodedDestination = queryDestination ?: yahooPathDestination
+        val destination = encodedDestination?.let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+        if (!destination.isNullOrBlank() && destination.startsWith("https://")) destination else absolute
+    }.getOrNull()?.takeIf {
+        val host = runCatching { URL(it).host.lowercase(Locale.ROOT) }.getOrDefault("")
+        it.startsWith("https://") && it.length <= 2_048 &&
+            !host.startsWith("google.") && !host.contains(".google.") &&
+            host != "duckduckgo.com" && !host.endsWith(".duckduckgo.com") &&
+            !host.contains("bing.com") && !host.endsWith("search.yahoo.com") &&
+            host != "r.search.yahoo.com"
+    }
 
     private fun cleanHtml(raw: String): String = raw
         .replace(Regex("(?is)<script\\b.*?</script>"), " ")

@@ -591,6 +591,11 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                             "SUBDOMAIN" -> "SUBDOMAIN_OF"
                                             "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
                                             "WAYBACK_STATUS" -> "ARCHIVE_LOOKUP_STATUS"
+                                            "ROBOTS_TXT" -> "HAS_ROBOTS_POLICY"
+                                            "ROBOTS_DISALLOW" -> "MENTIONS_CRAWLER_PATH"
+                                            "SITEMAP_SUMMARY" -> "HAS_PUBLIC_SITEMAP"
+                                            "SITEMAP_URL" -> "LISTS_PUBLIC_URL"
+                                            "SECURITY_TXT_METADATA" -> "PUBLISHES_SECURITY_CONTACT_METADATA"
                                             "RDAP_REGISTRAR" -> "REGISTERED_THROUGH"
                                             "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED" -> "REGISTRATION_METADATA_FOR"
                                             "HTTPS_REDIRECT" -> "REDIRECTS_TO"
@@ -608,7 +613,8 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         val rootToNode = item.kind in setOf(
                                             "DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "HTTPS_REDIRECT",
                                             "WAYBACK_STATUS", "IP_GEOLOCATION", "IP_GEOLOCATION_UNAVAILABLE",
-                                            "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
+                                            "ROBOTS_TXT", "ROBOTS_DISALLOW", "SITEMAP_SUMMARY", "SITEMAP_URL",
+                                            "SECURITY_TXT_METADATA", "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
                                             "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY",
                                             "WEB_IMAGE", "WEB_PREVIEW_IMAGE", "WEB_TITLE", "DNS_TXT",
                                             "HTTPS_STATUS", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY",

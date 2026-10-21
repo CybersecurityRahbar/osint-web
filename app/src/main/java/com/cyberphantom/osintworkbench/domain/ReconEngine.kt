@@ -462,7 +462,7 @@ class ReconEngine {
             useCaches = false
             setRequestProperty("Range", "bytes=0-98303")
             setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            setRequestProperty("User-Agent", "OSINT-Workbench/0.3 (public archive preview)")
+            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (public archive preview)")
         }
         try {
             val status = connection.responseCode
@@ -489,7 +489,14 @@ class ReconEngine {
                     .find(tag)?.groupValues?.getOrNull(1)?.trim()
             } ?: return@withContext null
             val resolved = URL(URL(originalUrl), imageValue).toString()
-            resolved.takeIf { it.startsWith("https://") && it.length <= 2_048 }
+            val resolvedHost = runCatching { URL(resolved).host.lowercase(Locale.ROOT) }.getOrDefault("")
+            val archiveImage = if (resolvedHost == "web.archive.org" || resolvedHost.endsWith(".archive.org")) {
+                resolved
+            } else {
+                val normalizedSource = if (resolved.startsWith("http://")) "https://" + resolved.removePrefix("http://") else resolved
+                "https://web.archive.org/web/${timestamp}im_/$normalizedSource"
+            }
+            archiveImage.takeIf { it.startsWith("https://") && it.length <= 2_048 }
         } finally {
             connection.disconnect()
         }

@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
@@ -88,6 +89,8 @@ import com.cyberphantom.osintworkbench.data.FindingRow
 import com.cyberphantom.osintworkbench.data.LocalStore
 import com.cyberphantom.osintworkbench.data.RelationRow
 import com.cyberphantom.osintworkbench.data.StoreStats
+import com.cyberphantom.osintworkbench.domain.LocalIntelligenceEngine
+import com.cyberphantom.osintworkbench.domain.LocalIntelligenceInsight
 import com.cyberphantom.osintworkbench.domain.ReconEngine
 import com.cyberphantom.osintworkbench.domain.ScanReport
 import kotlinx.coroutines.Dispatchers
@@ -799,6 +802,12 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
             }
         }
 
+        val insights = remember(entities, relations) {
+            LocalIntelligenceEngine.analyze(entities, relations)
+        }
+        SectionHeader("المحلل المحلي", "اقتراحات قابلة للتفسير مبنية على العلاقات المحفوظة فقط")
+        insights.forEach { insight -> IntelligenceInsightCard(insight) }
+
         if (relations.isEmpty()) {
             EmptyState(
                 Icons.Filled.AccountTree,
@@ -838,7 +847,7 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
 
 @Composable
 private fun GraphNetwork(relations: List<RelationRow>) {
-    val groups = relations.take(80).groupBy { it.toValue }
+    val groups = relations.take(80).groupBy { relationHubValue(it) }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         groups.forEach { (hub, links) ->
             Surface(
@@ -872,7 +881,7 @@ private fun GraphNetwork(relations: List<RelationRow>) {
                                     Box(Modifier.size(7.dp).clip(CircleShape).background(if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber))
                                     Text(relationDescription(relation.relation), color = WorkbenchColors.Violet, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
-                                Text(relation.fromValue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
+                                Text(relationLeafValue(relation), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     androidx.compose.material3.Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = WorkbenchColors.TextSecondary, modifier = Modifier.size(14.dp))
                                     Text("يرتبط بالكيان المرجعي أعلاه", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
@@ -903,14 +912,61 @@ private fun GraphNetwork(relations: List<RelationRow>) {
     }
 }
 
+private fun isParentToChildRelation(relation: String): Boolean = relation in setOf(
+    "RESOLVES_TO", "USES_NAMESERVER", "USES_MAIL_EXCHANGE", "REDIRECTS_TO",
+    "HAS_PUBLIC_IMAGE", "HAS_PAGE_TITLE", "HAS_DNS_TEXT_RECORD", "HAS_OBSERVED_PROPERTY",
+    "REGISTERED_THROUGH"
+)
+
+private fun relationHubValue(relation: RelationRow): String =
+    if (isParentToChildRelation(relation.relation)) relation.fromValue else relation.toValue
+
+private fun relationLeafValue(relation: RelationRow): String =
+    if (isParentToChildRelation(relation.relation)) relation.toValue else relation.fromValue
+
 private fun relationDescription(relation: String): String = when (relation) {
-    "SUBDOMAIN_OF" -> "نطاق فرعي موثق ضمن بيانات الشهادات"
-    "ARCHIVED_VERSION_OF" -> "لقطة محفوظة في الأرشيف"
-    "REGISTRATION_DATA_FOR" -> "بيانات تسجيل عامة للنطاق"
-    "WEB_METADATA_FOR" -> "بيانات مستخرجة من استجابة HTTPS"
-    "MATCHED_NEWS" -> "مقالة ظهرت في نتائج البحث الإخباري"
-    "OBSERVED_FOR" -> "سجل مرصود أثناء استطلاع النطاق"
+    "RESOLVES_TO" -> "سجل DNS يربط النطاق بعنوان IP"
+    "USES_NAMESERVER" -> "سجل NS يشير إلى خادم أسماء"
+    "USES_MAIL_EXCHANGE" -> "سجل MX يحدد خادم بريد"
+    "SUBDOMAIN_OF" -> "اسم نطاق فرعي مكتشف من مصدر عام"
+    "ARCHIVED_VERSION_OF" -> "لقطة مؤرشفة لهذا العنوان"
+    "REGISTERED_THROUGH" -> "سجل RDAP يذكر جهة التسجيل"
+    "REGISTRATION_METADATA_FOR" -> "بيانات تسجيل RDAP للنطاق"
+    "REDIRECTS_TO" -> "استجابة HTTPS أعادت التوجيه إلى العنوان"
+    "HAS_PUBLIC_IMAGE" -> "صورة ظاهرة في HTML العام"
+    "HAS_PAGE_TITLE" -> "عنوان صفحة مستخرج من HTML"
+    "HAS_DNS_TEXT_RECORD" -> "قيمة TXT مرصودة في DNS"
+    "HAS_OBSERVED_PROPERTY" -> "خاصية مرصودة في استجابة الويب"
+    "OBSERVED_DURING_RECON" -> "قيمة رُصدت أثناء الاستطلاع"
+    "MATCHED_NEWS" -> "مقالة ظهرت في مصدر نتائج الأخبار"
+    "PUBLIC_PROFILE_RESULT_FOR" -> "صفحة عامة ظهرت في نتائج هذا البحث"
     else -> relation.replace('_', ' ')
+}
+
+@Composable
+private fun IntelligenceInsightCard(insight: LocalIntelligenceInsight) {
+    val accent = when (insight.priority) {
+        1 -> WorkbenchColors.Amber
+        2 -> WorkbenchColors.Violet
+        3 -> WorkbenchColors.Teal
+        else -> WorkbenchColors.Blue
+    }
+    Surface(
+        color = WorkbenchColors.Surface,
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.40f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
+                Text(insight.title, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                if (insight.evidenceCount > 0) Text("${insight.evidenceCount} دليل", color = accent, fontSize = 9.sp)
+            }
+            Text(insight.explanation, color = WorkbenchColors.TextSecondary, fontSize = 11.sp, lineHeight = 17.sp)
+            Text("الخطوة المقترحة: ${insight.recommendation}", color = accent, fontSize = 11.sp, lineHeight = 17.sp)
+        }
+    }
 }
 
 @Composable
@@ -1045,7 +1101,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: 
                 }
             }
         }
-        Text("OSINT Workbench · 0.2.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("OSINT Workbench · 0.3.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

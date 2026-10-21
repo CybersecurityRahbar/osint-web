@@ -115,6 +115,21 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
             )
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(checked = includeImages, onCheckedChange = { includeImages = it })
+            Column(Modifier.weight(1f)) {
+                Text("إظهار الصور في النتائج", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "تشغيل/إيقاف الصور المصغرة في بحث الويب والأخبار؛ صور Commons متاحة عند تفعيلها.",
+                    fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
+                )
+            }
+        }
+
         Surface(
             color = WorkbenchColors.Surface,
             shape = RoundedCornerShape(21.dp),
@@ -155,20 +170,6 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         fontSize = 11.sp,
                         lineHeight = 18.sp
                     )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                            .background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = includeImages, onCheckedChange = { includeImages = it })
-                        Column(Modifier.weight(1f)) {
-                            Text("إظهار الصور المفهرسة", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "صور عامة من Wikimedia Commons؛ يمكنك إيقافها لتسريع البحث النصي.",
-                                fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
-                            )
-                        }
-                    }
                 } else {
                     Text("ابحث عن أخبار وتقارير منشورة", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     OutlinedTextField(
@@ -207,7 +208,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                 val startedAt = System.currentTimeMillis()
                                 try {
                                     if (mode == ResearchMode.NEWS) {
-                                        val result = MultiSourceNewsEngine().search(query)
+                                        val result = MultiSourceNewsEngine().search(query, includeImages = includeImages)
                                         news = result
                                         val records = result.articles.map { article ->
                                             ReconRecord(
@@ -423,7 +424,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                     Text(result.warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 18.sp)
                 }
                 result.articles.forEach { article ->
-                    NewsArticleCard(article = article, onOpen = { uriHandler.openUri(article.url) })
+                    NewsArticleCard(article = article, showImage = includeImages, onOpen = { uriHandler.openUri(article.url) })
                 }
             }
         }
@@ -488,7 +489,7 @@ private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) 
 }
 
 @Composable
-private fun NewsArticleCard(article: NewsArticle, onOpen: () -> Unit) {
+private fun NewsArticleCard(article: NewsArticle, showImage: Boolean = true, onOpen: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = WorkbenchColors.Surface,
@@ -503,7 +504,7 @@ private fun NewsArticleCard(article: NewsArticle, onOpen: () -> Unit) {
                 Text(article.publishedAt.ifBlank { "وقت النشر غير متاح" }, fontSize = 9.sp, color = WorkbenchColors.TextSecondary)
             }
             Text(article.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, lineHeight = 19.sp)
-            if (!article.imageUrl.isNullOrBlank()) {
+            if (showImage && !article.imageUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = article.imageUrl,
                     contentDescription = "صورة خبر من ${article.publisherName}",

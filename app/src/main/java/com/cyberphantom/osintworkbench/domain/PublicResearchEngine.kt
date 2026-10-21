@@ -29,7 +29,9 @@ data class PublicProfileResult(
     val description: String,
     val url: String,
     val confidence: Int,
-    val relevanceScore: Int = 0
+    val relevanceScore: Int = 0,
+    /** Optional image thumbnail returned by a public image index; never an identity assertion. */
+    val imageUrl: String? = null
 )
 
 data class NewsArticle(

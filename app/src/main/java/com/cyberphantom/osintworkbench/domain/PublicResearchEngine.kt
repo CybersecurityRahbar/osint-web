@@ -37,7 +37,10 @@ data class NewsArticle(
     val domain: String,
     val publishedAt: String,
     val language: String = "",
-    val sourceCountry: String = ""
+    val sourceCountry: String = "",
+    val publisherName: String = "",
+    val imageUrl: String? = null,
+    val provider: String = "GDELT DOC API"
 )
 
 data class NewsSearchResult(

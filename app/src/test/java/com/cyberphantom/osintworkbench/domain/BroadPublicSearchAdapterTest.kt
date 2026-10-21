@@ -57,6 +57,20 @@ class BroadPublicSearchAdapterTest {
     }
 
     @Test
+    fun parsesBingImageMetadataIntoThumbnailAndSourcePage() {
+        val html = """
+            <a class="iusc" m="{&quot;t&quot;:&quot;Historic building photo&quot;,&quot;murl&quot;:&quot;https://images.example.org/full.jpg&quot;,&quot;turl&quot;:&quot;https://images.example.org/thumb.jpg&quot;,&quot;purl&quot;:&quot;https://example.org/photo-page&quot;}"></a>
+        """.trimIndent()
+
+        val results = adapter.parseBingImagesHtml(html, 10)
+
+        assertEquals(1, results.size)
+        assertEquals("Historic building photo", results.single().title)
+        assertEquals("https://example.org/photo-page", results.single().url)
+        assertEquals("https://images.example.org/thumb.jpg", results.single().imageUrl)
+    }
+
+    @Test
     fun dropsSearchEngineSelfLinksAndNonHttpsResults() {
         val html = """
             <div class="result">

@@ -734,7 +734,7 @@ private fun ScanSummaryCard(report: ScanReport) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SummaryPill("${report.records.size} نتيجة", WorkbenchColors.Teal)
                 SummaryPill("${report.warnings.size} ملاحظة", WorkbenchColors.Amber)
-                SummaryPill("سلبي فقط", WorkbenchColors.Blue)
+                SummaryPill(if (report.records.any { it.kind == "PORT_SCAN_SUMMARY" }) "فحوص نشطة محدودة" else "جمع سلبي", WorkbenchColors.Blue)
             }
         }
     }
@@ -1192,7 +1192,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: 
                 }
             }
         }
-        Text("OSINT Workbench · 0.3.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("OSINT Workbench · 0.4.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

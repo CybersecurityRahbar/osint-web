@@ -88,7 +88,7 @@ internal class BroadPublicSearchAdapter {
                     when (provider.type) {
                         "qwant" -> parseQwant(JSONObject(fetch(provider.url, 4_500, "application/json")), provider.name, limit)
                         "searx" -> parseSearx(JSONObject(fetch(provider.url, 4_500, "application/json")), provider.name, limit)
-                        else -> parseHtml(fetch(provider.url, 4_500), provider.name, limit)
+                        else -> parseHtml(fetch(provider.url, 4_500, "text/html,application/xhtml+xml,*/*"), provider.name, limit)
                     }
                 }
                 if (results.isEmpty()) Attempt(provider.name, emptyList(), "لم يتعرف المحلل على نتائج خارجية؛ قد تكون الصفحة محجوبة أو تغير قالبها.")

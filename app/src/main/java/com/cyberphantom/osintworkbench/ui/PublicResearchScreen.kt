@@ -449,6 +449,13 @@ private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) 
                 Text(profile.title, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text(profile.description, fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp)
                 Text(profile.provider, fontSize = 9.sp, color = WorkbenchColors.Violet)
+                if (profile.relevanceScore > 0) {
+                    Text(
+                        "ملاءمة نصية تقريبية: ${profile.relevanceScore}/100",
+                        fontSize = 9.sp,
+                        color = WorkbenchColors.TextSecondary
+                    )
+                }
             }
             androidx.compose.material3.Icon(Icons.Filled.OpenInNew, contentDescription = "فتح المصدر", tint = WorkbenchColors.Teal)
         }

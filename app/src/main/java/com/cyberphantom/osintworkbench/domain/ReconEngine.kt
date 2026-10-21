@@ -429,6 +429,54 @@ class ReconEngine {
                 .find(html)?.groupValues?.getOrNull(1)?.trim()?.take(160)
             if (!generator.isNullOrBlank()) result += ReconRecord("TECH_META_GENERATOR", generator, "HTML metadata", finalUrl, 66, "ترويسة مولّد قابلة للتعديل من مالك الصفحة.")
 
+            fun htmlAttribute(tag: String, attribute: String): String? =
+                Regex("""(?is)\\b$attribute\\s*=\\s*["']([^"']+)["']""")
+                    .find(tag)?.groupValues?.getOrNull(1)?.trim()
+
+            val imageMetaTags = Regex("(?is)<meta\\b[^>]*>").findAll(html).map { it.value }
+            val socialImage = imageMetaTags.firstNotNullOfOrNull { tag ->
+                val key = (htmlAttribute(tag, "property") ?: htmlAttribute(tag, "name")).orEmpty()
+                if (!key.equals("og:image", true) && !key.equals("twitter:image", true)) return@firstNotNullOfOrNull null
+                htmlAttribute(tag, "content")
+            }?.let { image -> runCatching { URL(URL(finalUrl), image).toString() }.getOrNull() }
+                ?.takeIf { it.startsWith("https://") && it.length <= 2_048 }
+
+            if (!socialImage.isNullOrBlank()) {
+                result += ReconRecord(
+                    "WEB_PREVIEW_IMAGE",
+                    socialImage,
+                    "Open Graph / social preview metadata",
+                    finalUrl,
+                    68,
+                    "صورة معاينة عرّفتها الصفحة في HTML العام؛ قد تكون الصورة قديمة أو تتغير لاحقاً.",
+                    previewImageUrl = socialImage
+                )
+            }
+
+            val seenImages = linkedSetOf<String>()
+            val imageTags = Regex("(?is)<img\\b[^>]*>").findAll(html).map { it.value }
+            for (tag in imageTags) {
+                if (seenImages.size >= 4) break
+                val raw = htmlAttribute(tag, "src") ?: htmlAttribute(tag, "data-src") ?: continue
+                if (raw.startsWith("data:", true) || raw.startsWith("javascript:", true)) continue
+                val image = runCatching { URL(URL(finalUrl), raw).toString() }.getOrNull()
+                    ?.takeIf { it.startsWith("https://") && it.length <= 2_048 } ?: continue
+                if (!seenImages.add(image)) continue
+                val width = htmlAttribute(tag, "width")?.toIntOrNull()
+                val height = htmlAttribute(tag, "height")?.toIntOrNull()
+                if ((width != null && width < 48) || (height != null && height < 48)) continue
+                val alt = htmlAttribute(tag, "alt").orEmpty().take(140)
+                result += ReconRecord(
+                    "WEB_IMAGE",
+                    alt.ifBlank { image.substringAfterLast('/').take(120).ifBlank { "Image resource" } },
+                    "HTML image resource",
+                    finalUrl,
+                    58,
+                    "رابط صورة مرصود في HTML العام؛ قد تكون الصورة محمّلة ديناميكياً أو غير متاحة لاحقاً.",
+                    previewImageUrl = image
+                )
+            }
+
             val headers = listOf(
                 "Strict-Transport-Security" to "HSTS",
                 "Content-Security-Policy" to "CSP",

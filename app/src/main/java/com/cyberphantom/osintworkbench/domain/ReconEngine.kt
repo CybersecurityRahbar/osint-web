@@ -143,6 +143,16 @@ class ReconEngine {
                             .getOrDefault(emptyList())
                     },
                     async {
+                        runCatching { queryWaybackMedia(domain) }
+                            .onFailure { warnings += "Wayback images: ${it.message ?: "تعذر جلب صور الأرشيف"}" }
+                            .getOrDefault(emptyList())
+                    },
+                    async {
+                        runCatching { queryPublicWebFootprint(domain) }
+                            .onFailure { warnings += "فهرس الويب العام: ${it.message ?: "تعذر جلب صفحات النطاق المفهرسة"}" }
+                            .getOrDefault(emptyList())
+                    },
+                    async {
                         runCatching { inspectHttps(domain) }
                             .onFailure { warnings += "تحليل HTTPS: ${it.message ?: "تعذر الوصول إلى الموقع"}" }
                             .getOrDefault(emptyList())
@@ -361,6 +371,61 @@ class ReconEngine {
             }
         }
         output
+    }
+
+    private suspend fun queryPublicWebFootprint(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
+        val response = BroadPublicSearchAdapter().search(
+            queries = listOf("site:$domain", "\"$domain\" filetype:pdf"),
+            maxResults = 18,
+            includeImages = false
+        )
+        if (response.results.isEmpty()) {
+            val detail = response.warnings.take(4).joinToString(" · ")
+                .ifBlank { "لم تُرجع محركات الفهرسة صفحات عامة قابلة للاستخراج." }
+            throw IllegalStateException(detail.take(500))
+        }
+        response.results.map { item ->
+            ReconRecord(
+                kind = "PUBLIC_WEB_RESULT",
+                value = item.title,
+                source = item.provider,
+                sourceUrl = item.url,
+                confidence = item.confidence,
+                detail = item.description + " · ملاءمة نصية إرشادية: " + item.relevanceScore
+            )
+        }
+    }
+
+    private suspend fun queryWaybackMedia(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
+        val encodedDomain = enc(domain)
+        val endpoint = "https://web.archive.org/cdx/search/cdx?url=$encodedDomain&matchType=domain&output=json&fl=timestamp,original,statuscode,mimetype&filter=statuscode:200&filter=mimetype:image/.*&collapse=urlkey&limit=30"
+        val raw = getText(endpoint, timeoutMs = 6_000, accept = "application/json, text/plain, */*", maxAttempts = 1)
+        val rows = JSONArray(raw)
+        val records = mutableListOf<ReconRecord>()
+        val seen = linkedSetOf<String>()
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONArray(index) ?: continue
+            if (row.length() < 4 || row.optString(0).equals("timestamp", true)) continue
+            val timestamp = row.optString(0)
+            val original = row.optString(1)
+            val status = row.optString(2)
+            val mime = row.optString(3)
+            if (timestamp.length < 8 || !(original.startsWith("https://") || original.startsWith("http://"))) continue
+            if (!mime.startsWith("image/", true) || !seen.add(original)) continue
+            val snapshot = "https://web.archive.org/web/$timestamp/$original"
+            val directImage = "https://web.archive.org/web/" + timestamp + "id_/" + original
+            records += ReconRecord(
+                kind = "WAYBACK_IMAGE",
+                value = original,
+                source = "Internet Archive Wayback media index",
+                sourceUrl = snapshot,
+                confidence = 82,
+                detail = "صورة مؤرشفة ضمن فهرس CDX. نوع المحتوى: $mime · حالة الالتقاط: $status. قد تكون الصورة قديمة أو لا تُحمّل بسبب قيود الأرشيف.",
+                previewImageUrl = directImage
+            )
+            if (records.size >= 20) break
+        }
+        records
     }
 
     private suspend fun queryWayback(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {

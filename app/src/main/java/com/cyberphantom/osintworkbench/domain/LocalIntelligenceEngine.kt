@@ -63,7 +63,6 @@ object LocalIntelligenceEngine {
             .filter { evidence -> evidence.map { it.source }.filter(String::isNotBlank).distinct().size >= 2 }
 
         if (corroboratedGroups.isNotEmpty()) {
-            val sourceNames = corroboratedGroups.flatten().map { it.source }.filter(String::isNotBlank).distinct()
             insights += LocalIntelligenceInsight(
                 title = "علاقات لها أكثر من مصدر مسجل",
                 explanation = "${corroboratedGroups.size} علاقات ظهرت في أكثر من مصدر محفوظ. تعدد أسماء المصادر لا يضمن استقلال بياناتها؛ ربما تعتمد على سجل عام واحد.",

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -84,6 +85,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     var searchReport by remember { mutableStateOf<ScanReport?>(null) }
     var phoneMetadata by remember { mutableStateOf<String?>(null) }
     var sourceWarnings by remember { mutableStateOf(emptyList<String>()) }
+    var includeImages by rememberSaveable { mutableStateOf(true) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
@@ -153,6 +155,20 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         fontSize = 11.sp,
                         lineHeight = 18.sp
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(checked = includeImages, onCheckedChange = { includeImages = it })
+                        Column(Modifier.weight(1f)) {
+                            Text("إظهار الصور المفهرسة", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "صور عامة من Wikimedia Commons؛ يمكنك إيقافها لتسريع البحث النصي.",
+                                fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
+                            )
+                        }
+                    }
                 } else {
                     Text("ابحث عن أخبار وتقارير منشورة", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     OutlinedTextField(
@@ -240,7 +256,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                     } else {
                                         links = engine.buildSearchLinks(query, kind)
                                         val webResponse = withContext(Dispatchers.IO) {
-                                            automatedSearch.search(query, kind, maxResults = 30)
+                                            automatedSearch.search(query, kind, maxResults = 30, includeImages = includeImages)
                                         }
                                         phoneMetadata = if (kind == IdentifierKind.PHONE) automatedSearch.phoneMetadata(query) else null
                                         sourceWarnings = webResponse.warnings
@@ -442,8 +458,17 @@ private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) 
         border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
     ) {
         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(36.dp).clip(CircleShape).background(WorkbenchColors.Violet.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-                androidx.compose.material3.Icon(Icons.Filled.PersonSearch, contentDescription = null, tint = WorkbenchColors.Violet, modifier = Modifier.size(19.dp))
+            if (!profile.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = profile.imageUrl,
+                    contentDescription = "صورة من ${profile.provider}",
+                    modifier = Modifier.size(68.dp).clip(RoundedCornerShape(10.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            } else {
+                Box(Modifier.size(36.dp).clip(CircleShape).background(WorkbenchColors.Violet.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Icon(Icons.Filled.PersonSearch, contentDescription = null, tint = WorkbenchColors.Violet, modifier = Modifier.size(19.dp))
+                }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(profile.title, fontSize = 13.sp, fontWeight = FontWeight.Bold)

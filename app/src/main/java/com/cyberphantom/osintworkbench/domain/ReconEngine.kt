@@ -588,44 +588,50 @@ class ReconEngine {
     }
 
     private fun probeExposurePath(domain: String, path: String, signature: Regex): ReconRecord? {
-        val endpoint = "https://$domain$path"
-        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 2_500
-            readTimeout = 2_500
-            instanceFollowRedirects = false
-            useCaches = false
-            setRequestProperty("Range", "bytes=0-4095")
-            setRequestProperty("Accept", "text/plain,text/html,application/json,*/*")
-            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (authorized low-impact exposure check)")
-        }
-        try {
-            val status = connection.responseCode
-            if (status !in 200..299) return null
-            val body = connection.inputStream.use { input ->
-                val out = java.io.ByteArrayOutputStream()
-                val buffer = ByteArray(1_024)
-                var total = 0
-                while (total < 4_096) {
-                    val count = input.read(buffer, 0, minOf(buffer.size, 4_096 - total))
-                    if (count <= 0) break
-                    out.write(buffer, 0, count)
-                    total += count
-                }
-                out.toString(StandardCharsets.UTF_8.name())
+        // Some legitimate sites serve only HTTP; check HTTPS first, then try HTTP once.
+        for (scheme in listOf("https", "http")) {
+            val endpoint = "$scheme://$domain$path"
+            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 2_500
+                readTimeout = 2_500
+                instanceFollowRedirects = false
+                useCaches = false
+                setRequestProperty("Range", "bytes=0-4095")
+                setRequestProperty("Accept", "text/plain,text/html,application/json,*/*")
+                setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (authorized low-impact exposure check)")
             }
-            if (!signature.containsMatchIn(body)) return null
-            return ReconRecord(
-                kind = "POTENTIAL_SENSITIVE_EXPOSURE",
-                value = "$path returned HTTP $status with a matching content signature",
-                source = "Bounded public exposure checks",
-                sourceUrl = endpoint,
-                confidence = 78,
-                detail = "تم رصد توقيع محتوى قد يشير إلى ملف/واجهة حساسة مكشوفة. لم يُحفظ محتوى الاستجابة؛ تحقق يدوياً قبل تصنيفها كثغرة."
-            )
-        } finally {
-            connection.disconnect()
+            try {
+                val status = connection.responseCode
+                if (status !in 200..299) continue
+                val body = connection.inputStream.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(1_024)
+                    var total = 0
+                    while (total < 4_096) {
+                        val count = input.read(buffer, 0, minOf(buffer.size, 4_096 - total))
+                        if (count <= 0) break
+                        out.write(buffer, 0, count)
+                        total += count
+                    }
+                    out.toString(StandardCharsets.UTF_8.name())
+                }
+                if (!signature.containsMatchIn(body)) continue
+                return ReconRecord(
+                    kind = "POTENTIAL_SENSITIVE_EXPOSURE",
+                    value = "$path returned HTTP $status with a matching content signature",
+                    source = "Bounded public exposure checks",
+                    sourceUrl = endpoint,
+                    confidence = 78,
+                    detail = "تم رصد توقيع محتوى قد يشير إلى ملف/واجهة حساسة مكشوفة. لم يُحفظ محتوى الاستجابة؛ تحقق يدوياً قبل تصنيفها كثغرة."
+                )
+            } catch (_: Exception) {
+                // A failed scheme should not suppress trying the alternate public scheme.
+            } finally {
+                connection.disconnect()
+            }
         }
+        return null
     }
 
     private suspend fun inspectHttps(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {

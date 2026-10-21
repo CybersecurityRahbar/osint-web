@@ -39,7 +39,7 @@ class MultiSourceNewsEngine {
         Publisher("العربية", "alarabiya.net", "ar", "SA", "SA:ar")
     )
 
-    suspend fun search(query: String, maxRecords: Int = 40): NewsSearchResult = withContext(Dispatchers.IO) {
+    suspend fun search(query: String, maxRecords: Int = 40, includeImages: Boolean = true): NewsSearchResult = withContext(Dispatchers.IO) {
         val clean = query.trim()
         require(clean.isNotBlank()) { "أدخل كلمات البحث عن الأخبار." }
         require(clean.length <= 180) { "عبارة البحث طويلة جداً." }
@@ -50,20 +50,20 @@ class MultiSourceNewsEngine {
             val sourceSemaphore = Semaphore(4)
             val tasks = mutableListOf<kotlinx.coroutines.Deferred<SourceOutcome>>()
             tasks += async {
-                runCatching { sourceSemaphore.withPermit { queryGdelt(clean, limit) } }.fold(
+                runCatching { sourceSemaphore.withPermit { queryGdelt(clean, limit, includeImages) } }.fold(
                     { SourceOutcome("GDELT", it, null) },
                     { SourceOutcome("GDELT", emptyList(), it.message ?: "تعذر الوصول") }
                 )
             }
             tasks += async {
-                runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, limit, null) } }.fold(
+                runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, limit, null, includeImages) } }.fold(
                     { SourceOutcome("Google News RSS", it, null) },
                     { SourceOutcome("Google News RSS", emptyList(), it.message ?: "تعذر الوصول") }
                 )
             }
             publishers.forEach { publisher ->
                 tasks += async {
-                    runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, maxOf(5, limit / 2), publisher) } }.fold(
+                    runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, maxOf(5, limit / 2), publisher, includeImages) } }.fold(
                         { SourceOutcome(publisher.name, it, null) },
                         { SourceOutcome(publisher.name, emptyList(), it.message ?: "تعذر الوصول") }
                     )
@@ -92,7 +92,7 @@ class MultiSourceNewsEngine {
         NewsSearchResult(clean, articles, warning)
     }
 
-    private suspend fun queryGdelt(query: String, maxRecords: Int): List<NewsArticle> = withContext(Dispatchers.IO) {
+    private suspend fun queryGdelt(query: String, maxRecords: Int, includeImages: Boolean): List<NewsArticle> = withContext(Dispatchers.IO) {
         val limit = maxRecords.coerceIn(1, 50)
         // Retry a simpler request if the richer one returns an HTML error page or is rate-limited.
         val endpoints = listOf(
@@ -128,7 +128,7 @@ class MultiSourceNewsEngine {
                                     language = item.optString("language"),
                                     sourceCountry = item.optString("sourcecountry"),
                                     publisherName = publisherLabel(domain),
-                                    imageUrl = item.optString("socialimage").takeIf { it.startsWith("https://") },
+                                    imageUrl = item.optString("socialimage").takeIf { includeImages && it.startsWith("https://") },
                                     provider = "GDELT DOC API"
                                 )
                             )
@@ -156,7 +156,8 @@ class MultiSourceNewsEngine {
     private suspend fun queryGoogleNews(
         query: String,
         maxRecords: Int,
-        publisher: Publisher?
+        publisher: Publisher?,
+        includeImages: Boolean
     ): List<NewsArticle> = withContext(Dispatchers.IO) {
         val queryText = if (publisher == null) query else "$query site:${publisher.domain}"
         val language = publisher?.language ?: "ar"
@@ -164,7 +165,7 @@ class MultiSourceNewsEngine {
         val edition = publisher?.edition ?: "YE:ar"
         val endpoint = "https://news.google.com/rss/search?q=${enc(queryText)}&hl=${enc(language)}&gl=${enc(country)}&ceid=${enc(edition)}"
         val xml = getText(endpoint, 12_000, "application/rss+xml, application/xml, text/xml")
-        parseRss(xml, publisher, language, country)
+        parseRss(xml, publisher, language, country, includeImages)
             .take(maxRecords.coerceIn(1, 60))
     }
 
@@ -172,7 +173,8 @@ class MultiSourceNewsEngine {
         xml: String,
         requestedPublisher: Publisher?,
         language: String,
-        country: String
+        country: String,
+        includeImages: Boolean = true
     ): List<NewsArticle> {
         val parser = Xml.newPullParser()
         parser.setInput(StringReader(xml))
@@ -238,7 +240,7 @@ class MultiSourceNewsEngine {
                             language = language,
                             sourceCountry = country,
                             publisherName = actualPublisher,
-                            imageUrl = imageUrl.takeIf { it.startsWith("https://") },
+                            imageUrl = imageUrl.takeIf { includeImages && it.startsWith("https://") },
                             provider = if (requestedPublisher == null) "Google News RSS" else "Google News RSS · ${requestedPublisher.name}"
                         )
                     }

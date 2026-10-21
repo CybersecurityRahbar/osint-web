@@ -19,10 +19,11 @@ This release incorporates the first user-test feedback and expands the initial d
 - Phone/email/social research is not guaranteed to identify the owner of an identifier.
 - SQLite is still not encrypted at rest. Avoid storing high-sensitivity secrets.
 - CI verification proves compilation and the unit tests only. The owner must test network availability and HTML/JSON flows on the target Android phone.
-- GitHub-hosted debug APKs can have different signing certificates between builds. The v0.2.0 debug certificate differs from the prior v0.1.0 artifact; Android may refuse to update it in place. If old local results matter, do not uninstall v0.1.0 until a migration/backup path is secured.
+- CI debug APKs use the separate package ID `com.cyberphantom.osintworkbench.preview` and app label `OSINT Workbench Preview`; it can be installed alongside v0.1.0 without replacing its private database. Release builds keep `com.cyberphantom.osintworkbench`. Subsequent CI debug APKs may still require JSON export/import if signing keys change between builds.
 
 ## Version
-- Application ID: `com.cyberphantom.osintworkbench`
+- Release application ID: `com.cyberphantom.osintworkbench`
+- Debug preview application ID: `com.cyberphantom.osintworkbench.preview` (side-by-side install)
 - versionCode: `2`
 - versionName: `0.2.0`
 - Android minimum SDK: 26

@@ -1,0 +1,451 @@
+package com.cyberphantom.osintworkbench.domain
+
+import com.google.i18n.phonenumbers.PhoneNumberUtil
+import com.google.i18n.phonenumbers.Phonenumber
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.URI
+import java.net.URL
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.util.Locale
+
+data class PublicWebSearchResponse(
+    val query: String,
+    val results: List<PublicProfileResult>,
+    val warnings: List<String>,
+    val providersAttempted: Int
+) {
+    val sourceCount: Int get() = results.map { it.provider }.distinct().size
+}
+
+/**
+ * In-app, public-index search. It queries DuckDuckGo's HTML/Lite result pages instead of
+ * rendering a set of manually curated links. It does not authenticate to, crawl, or bypass
+ * access controls on social networks. Public result availability depends on the search provider.
+ */
+class AdvancedPublicSearchEngine {
+    fun buildSearchQueries(rawQuery: String, kind: IdentifierKind): List<String> {
+        val query = rawQuery.trim()
+        require(query.isNotBlank()) { "أدخل قيمة للبحث." }
+        require(query.length <= 240) { "عبارة البحث طويلة جداً." }
+
+        return when (kind) {
+            IdentifierKind.NAME -> listOf(
+                query,
+                "\"$query\" site:reddit.com",
+                "\"$query\" (site:news.ycombinator.com OR site:medium.com)"
+            )
+            IdentifierKind.USERNAME -> {
+                val username = query.removePrefix("@")
+                require(username.matches(Regex("[A-Za-z0-9._-]{1,100}"))) {
+                    "اسم المستخدم يجب أن يكون معرفاً بسيطاً دون مسافات."
+                }
+                listOf(
+                    "\"$username\"",
+                    "\"$username\" site:reddit.com",
+                    "\"$username\" (site:github.com OR site:gitlab.com)",
+                    "\"$username\" (site:youtube.com OR site:x.com)"
+                )
+            }
+            IdentifierKind.PHONE -> {
+                val digits = query.filter(Char::isDigit)
+                require(digits.length in 7..15) { "أدخل رقماً يحتوي من 7 إلى 15 رقماً." }
+                val normalized = normalizePhoneForSearch(query)
+                buildList {
+                    add("\"$query\"")
+                    if (digits != query) add("\"$digits\"")
+                    add("site:reddit.com \"$digits\"")
+                    add("\"$digits\" (site:tellows.com OR site:shouldianswer.com OR site:sync.me)")
+                    normalized.forEach { if (it != query && it != digits) add("\"$it\"") }
+                }.distinct().take(6)
+            }
+            IdentifierKind.EMAIL -> {
+                require(query.contains("@") && query.substringAfter("@").contains(".")) {
+                    "أدخل عنوان بريد إلكتروني كاملاً."
+                }
+                listOf(
+                    "\"$query\"",
+                    "\"$query\" site:reddit.com",
+                    "\"$query\" (site:github.com OR site:gitlab.com)"
+                )
+            }
+        }.distinct()
+    }
+
+    /**
+     * Number metadata is derived offline from numbering-plan metadata only. It cannot establish
+     * whether a number is currently assigned, reachable, or who owns it.
+     */
+    fun phoneMetadata(rawPhone: String): String? {
+        val clean = rawPhone.trim()
+        if (!clean.startsWith("+")) return null
+        return runCatching {
+            val util = PhoneNumberUtil.getInstance()
+            val parsed: Phonenumber.PhoneNumber = util.parse(clean, "ZZ")
+            val possible = util.isPossibleNumber(parsed)
+            val validRange = util.isValidNumber(parsed)
+            val region = util.getRegionCodeForNumber(parsed).orEmpty().ifBlank { "غير معروف" }
+            val type = util.getNumberType(parsed).name
+                .lowercase(Locale.ROOT)
+                .replace('_', ' ')
+            val e164 = util.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
+            "تنسيق دولي: $e164 · رمز المنطقة: $region · النوع التقريبي: $type · " +
+                when {
+                    validRange -> "صيغة متوافقة مع خطة الترقيم الحالية؛ لا تثبت أن الرقم نشط أو تعرّف مالكه."
+                    possible -> "الطول ممكن لكن النطاق غير مؤكد؛ لا يثبت أن الرقم نشط أو تعرّف مالكه."
+                    else -> "الصيغة لا تطابق بيانات خطة الترقيم الحالية؛ راجع الرقم ورمز الدولة."
+                }
+        }.getOrNull()
+    }
+
+    suspend fun search(rawQuery: String, kind: IdentifierKind, maxResults: Int = 24): PublicWebSearchResponse {
+        val query = rawQuery.trim()
+        val searchQueries = buildSearchQueries(query, kind)
+        val limit = maxResults.coerceIn(5, 40)
+
+        val outcomes = coroutineScope {
+            searchQueries.mapIndexed { index, searchQuery ->
+                async {
+                    runCatching { searchDuckDuckGo(searchQuery, minOf(12, limit)) }
+                        .fold(
+                            onSuccess = { SearchAttempt(index, searchQuery, it, null) },
+                            onFailure = { SearchAttempt(index, searchQuery, emptyList(), it.message ?: "تعذر الوصول إلى DuckDuckGo") }
+                        )
+                }
+            }.awaitAll()
+        }
+
+        val indexedResults = outcomes
+            .flatMap { attempt ->
+                attempt.results.map { result ->
+                    result.copy(relevanceScore = calculateRelevance(query, kind, result, attempt.index))
+                }
+            }
+            .distinctBy { canonicalUrl(it.url) }
+
+        // The Instant Answer endpoint is a small, independent fallback for definitions and
+        // knowledge-panel style results. It supplements web-index hits; it doesn't replace them.
+        val instantResults = if (indexedResults.size < minOf(5, limit)) {
+            runCatching { searchInstantAnswer(query, limit) }.getOrDefault(emptyList())
+                .map { result -> result.copy(relevanceScore = calculateRelevance(query, kind, result, 0)) }
+        } else emptyList()
+
+        val results = (indexedResults + instantResults)
+            .distinctBy { canonicalUrl(it.url) }
+            .groupBy { sourceHost(it.url) }
+            .values
+            .flatMap { group -> group.sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence }).take(5) }
+            .sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
+            .take(limit)
+
+        val warnings = buildList {
+            outcomes.filter { it.error != null }.take(4).forEach { failed ->
+                add("DuckDuckGo: تعذر جلب بحث «${failed.query}»: ${failed.error}")
+            }
+            if (results.isEmpty() && outcomes.all { it.results.isEmpty() }) {
+                add("لم تُستخرج نتائج ويب مباشرة. قد يكون مزود البحث محجوباً أو غيّر بنية الصفحة؛ روابط المصادر البديلة ما زالت متاحة.")
+            }
+        }.distinct()
+
+        return PublicWebSearchResponse(
+            query = query,
+            results = results,
+            warnings = warnings,
+            providersAttempted = outcomes.size + if (instantResults.isNotEmpty()) 1 else 0
+        )
+    }
+
+    /**
+     * Deterministic lexical ranking: exact identifier hits rank above vague token overlap.
+     * The score is a relevance heuristic, not a probability or proof that the result belongs
+     * to the searched person/number.
+     */
+    internal fun calculateRelevance(
+        query: String,
+        kind: IdentifierKind,
+        result: PublicProfileResult,
+        queryExpansionIndex: Int = 0
+    ): Int {
+        val title = normalizeForRanking(result.title)
+        val description = normalizeForRanking(result.description)
+        val destination = normalizeForRanking(result.url)
+        val combined = "$title $description $destination"
+        var score = 18
+
+        when (kind) {
+            IdentifierKind.PHONE -> {
+                val digits = query.filter(Char::isDigit)
+                val resultDigits = (result.title + " " + result.description + " " + result.url).filter(Char::isDigit)
+                if (digits.length >= 7 && resultDigits.contains(digits)) score += 58
+                else if (digits.length >= 7 && resultDigits.contains(digits.takeLast(7))) score += 28
+                if (result.provider.contains("Tellows", true) ||
+                    result.provider.contains("Sync.ME", true) ||
+                    result.provider.contains("Should I Answer", true)
+                ) score += 5
+            }
+            IdentifierKind.EMAIL -> {
+                val email = query.trim().lowercase(Locale.ROOT)
+                if (email.isNotBlank() && combined.contains(email)) score += 60
+                else {
+                    val parts = email.split('@')
+                    if (parts.firstOrNull().orEmpty().length >= 3 && combined.contains(parts.first())) score += 18
+                    if (parts.getOrNull(1).orEmpty().contains('.') && combined.contains(parts[1])) score += 12
+                }
+            }
+            IdentifierKind.USERNAME -> {
+                val username = query.trim().removePrefix("@").lowercase(Locale.ROOT)
+                if (username.length >= 2 && (title.contains(username) || destination.contains(username))) score += 48
+                else if (username.length >= 2 && description.contains(username)) score += 25
+            }
+            IdentifierKind.NAME -> {
+                val phrase = normalizeForRanking(query)
+                if (phrase.length >= 3 && title.contains(phrase)) score += 36
+                if (phrase.length >= 3 && description.contains(phrase)) score += 16
+                val tokens = phrase.split(' ').filter { it.length >= 2 }.distinct()
+                if (tokens.isNotEmpty()) {
+                    val titleMatches = tokens.count { title.contains(it) }
+                    val descriptionMatches = tokens.count { description.contains(it) }
+                    score += (24 * titleMatches / tokens.size)
+                    score += (12 * descriptionMatches / tokens.size)
+                }
+            }
+        }
+
+        score -= queryExpansionIndex.coerceAtLeast(0) * 3
+        return score.coerceIn(0, 100)
+    }
+
+    private fun normalizeForRanking(value: String): String =
+        value.lowercase(Locale.ROOT)
+            .replace(Regex("[^\\p{L}\\p{N}@.+_-]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private suspend fun searchInstantAnswer(query: String, limit: Int): List<PublicProfileResult> = withContext(Dispatchers.IO) {
+        val endpoint = "https://api.duckduckgo.com/?q=${URLEncoder.encode(query, StandardCharsets.UTF_8.name())}&format=json&no_html=1&skip_disambig=1"
+        val connection = (URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 5_000
+            readTimeout = 7_000
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "OSINT-Workbench/0.3 (public research app)")
+        }
+        try {
+            val status = connection.responseCode
+            val body = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            if (status !in 200..299 || body.isBlank()) return@withContext emptyList()
+            val root = JSONObject(body)
+            val results = mutableListOf<PublicProfileResult>()
+
+            val abstractUrl = root.optString("AbstractURL")
+            val abstractText = root.optString("AbstractText").trim()
+            if (abstractText.isNotBlank() && abstractUrl.startsWith("https://")) {
+                results += PublicProfileResult(
+                    provider = "DuckDuckGo Instant Answer",
+                    title = root.optString("Heading").ifBlank { query },
+                    description = abstractText.take(600),
+                    url = abstractUrl,
+                    confidence = 70
+                )
+            }
+
+            fun appendTopics(items: JSONArray, depth: Int = 0) {
+                if (depth > 2 || results.size >= limit) return
+                for (index in 0 until items.length()) {
+                    if (results.size >= limit) break
+                    val item = items.optJSONObject(index) ?: continue
+                    val nested = item.optJSONArray("Topics")
+                    if (nested != null) {
+                        appendTopics(nested, depth + 1)
+                        continue
+                    }
+                    val url = item.optString("FirstURL")
+                    val text = item.optString("Text").trim()
+                    if (text.isNotBlank() && url.startsWith("https://")) {
+                        results += PublicProfileResult(
+                            provider = "DuckDuckGo Instant Answer",
+                            title = text.substringBefore(" - ").take(200).ifBlank { query },
+                            description = text.take(600),
+                            url = url,
+                            confidence = 62
+                        )
+                    }
+                }
+            }
+
+            appendTopics(root.optJSONArray("Results") ?: JSONArray())
+            appendTopics(root.optJSONArray("RelatedTopics") ?: JSONArray())
+            results.distinctBy { canonicalUrl(it.url) }.take(limit)
+        } catch (_: Exception) {
+            emptyList()
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun searchDuckDuckGo(query: String, limit: Int): List<PublicProfileResult> =
+        withContext(Dispatchers.IO) {
+            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
+            val endpoints = listOf(
+                "https://html.duckduckgo.com/html/?q=$encoded&kl=xa-en",
+                "https://lite.duckduckgo.com/lite/?q=$encoded"
+            )
+            var lastFailure: Exception? = null
+            for (endpoint in endpoints) {
+                try {
+                    val html = fetchHtml(endpoint, timeoutMs = 9_000)
+                    val parsed = parseResults(html, limit)
+                    if (parsed.isNotEmpty()) return@withContext parsed
+                } catch (error: Exception) {
+                    lastFailure = error
+                }
+            }
+            if (lastFailure != null) throw IllegalStateException(lastFailure.message ?: "Search source unavailable")
+            emptyList()
+        }
+
+    private fun fetchHtml(endpoint: String, timeoutMs: Int): String {
+        val connection = (URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            setRequestProperty("Accept-Language", "en-US,en;q=0.8,ar;q=0.6")
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36")
+        }
+        try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.use { it.readBytes().toString(StandardCharsets.UTF_8) }.orEmpty()
+            if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
+            if (body.isBlank()) throw IllegalStateException("Empty response from ${URL(endpoint).host}")
+            if (body.contains("anomaly-modal", ignoreCase = true) || body.contains("bot challenge", ignoreCase = true)) {
+                throw IllegalStateException("قدّم مزود البحث تحدي وصول بدلاً من النتائج")
+            }
+            return body
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun parseResults(html: String, limit: Int): List<PublicProfileResult> {
+        val anchors = Regex(
+            """(?is)<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*(?:result__a|result-link)[^"']*["'])[^>]*>.*?</a>"""
+        ).findAll(html).toList()
+        val snippets = Regex(
+            """(?is)<(?:a|div|td)\b(?=[^>]*\bclass\s*=\s*["'][^"']*(?:result__snippet|result-snippet)[^"']*["'])[^>]*>(.*?)</(?:a|div|td)>"""
+        ).findAll(html).map { cleanHtml(it.groupValues[1]) }.toList()
+        return buildList {
+            for ((index, match) in anchors.withIndex()) {
+                if (size >= limit) break
+                val anchor = match.value
+                val attrs = anchor.substringBefore('>')
+                val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
+                    .find(attrs)?.groupValues?.getOrNull(1) ?: continue
+                val title = cleanHtml(anchor.substringAfter('>').substringBeforeLast("</a>"))
+                if (title.isBlank()) continue
+                val url = unwrapSearchUrl(href) ?: continue
+                val host = sourceHost(url)
+                if (host.isBlank() || host.contains("duckduckgo.com")) continue
+                val snippet = snippets.getOrNull(index).orEmpty()
+                add(
+                    PublicProfileResult(
+                        provider = "DuckDuckGo · ${displayHost(host)}",
+                        title = title.take(240),
+                        description = snippet.ifBlank { "نتيجة مفهرسة عامة · افتح المصدر للتحقق من النص والسياق." }.take(500),
+                        url = url,
+                        confidence = if (snippet.isBlank()) 68 else 74
+                    )
+                )
+            }
+        }.distinctBy { canonicalUrl(it.url) }
+    }
+
+    private fun unwrapSearchUrl(rawHref: String): String? = runCatching {
+        val absolute = when {
+            rawHref.startsWith("//") -> "https:$rawHref"
+            rawHref.startsWith("/") -> "https://duckduckgo.com$rawHref"
+            else -> rawHref
+        }
+        val uri = URI(absolute)
+        if (uri.host?.endsWith("duckduckgo.com", true) == true && uri.rawQuery != null) {
+            val destination = uri.rawQuery.split('&')
+                .mapNotNull { part ->
+                    val pieces = part.split('=', limit = 2)
+                    if (pieces.size == 2 && pieces[0] == "uddg") URLDecoder.decode(pieces[1], StandardCharsets.UTF_8.name()) else null
+                }.firstOrNull()
+            if (!destination.isNullOrBlank()) destination else absolute
+        } else absolute
+    }.getOrNull()?.takeIf { it.startsWith("https://") && it.length <= 2_048 }
+
+    private fun cleanHtml(raw: String): String = raw
+        .replace(Regex("(?is)<script\\b.*?</script>"), " ")
+        .replace(Regex("(?is)<style\\b.*?</style>"), " ")
+        .replace(Regex("(?s)<[^>]+>"), " ")
+        .replace("&amp;", "&")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&#x27;", "'")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+
+    private fun canonicalUrl(raw: String): String = runCatching {
+        val uri = URI(raw)
+        URI(uri.scheme, uri.authority, uri.path, null, null).toString().trimEnd('/')
+    }.getOrDefault(raw.substringBefore('#').substringBefore('?').trimEnd('/')).lowercase(Locale.ROOT)
+
+    private fun sourceHost(raw: String): String = runCatching { URL(raw).host.lowercase(Locale.ROOT).removePrefix("www.") }.getOrDefault("")
+
+    private fun displayHost(host: String): String = when {
+        host == "reddit.com" || host.endsWith(".reddit.com") -> "Reddit"
+        host == "github.com" || host.endsWith(".github.com") -> "GitHub"
+        host == "tellows.com" || host.endsWith(".tellows.com") -> "Tellows"
+        host == "sync.me" || host.endsWith(".sync.me") -> "Sync.ME"
+        host == "shouldianswer.com" || host.endsWith(".shouldianswer.com") -> "Should I Answer"
+        host.contains("youtube.com") -> "YouTube"
+        host == "x.com" || host.endsWith(".x.com") -> "X"
+        else -> host
+    }
+
+    private fun normalizePhoneForSearch(raw: String): List<String> {
+        val clean = raw.trim()
+        val digits = clean.filter(Char::isDigit)
+        val values = linkedSetOf<String>()
+        values += clean
+        values += digits
+        if (clean.startsWith("+")) {
+            runCatching {
+                val util = PhoneNumberUtil.getInstance()
+                val parsed = util.parse(clean, "ZZ")
+                if (util.isPossibleNumber(parsed)) {
+                    values += util.format(parsed, PhoneNumberUtil.PhoneNumberFormat.E164)
+                    values += util.format(parsed, PhoneNumberUtil.PhoneNumberFormat.INTERNATIONAL)
+                }
+            }
+        }
+        return values.filter(String::isNotBlank)
+    }
+
+    private data class SearchAttempt(
+        val index: Int,
+        val query: String,
+        val results: List<PublicProfileResult>,
+        val error: String?
+    )
+
+    private fun enc(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
+}

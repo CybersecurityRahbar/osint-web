@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
@@ -75,6 +77,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -86,6 +90,9 @@ import com.cyberphantom.osintworkbench.data.FindingRow
 import com.cyberphantom.osintworkbench.data.LocalStore
 import com.cyberphantom.osintworkbench.data.RelationRow
 import com.cyberphantom.osintworkbench.data.StoreStats
+import com.cyberphantom.osintworkbench.domain.LocalIntelligenceEngine
+import com.cyberphantom.osintworkbench.domain.LocalIntelligenceInsight
+import com.cyberphantom.osintworkbench.domain.ReconRecord
 import com.cyberphantom.osintworkbench.domain.ReconEngine
 import com.cyberphantom.osintworkbench.domain.ScanReport
 import kotlinx.coroutines.Dispatchers
@@ -108,8 +115,8 @@ private enum class WorkbenchTab(val title: String, val icon: ImageVector) {
     RECON("الاستطلاع", Icons.Filled.Search),
     GRAPH("العلاقات", Icons.Filled.AccountTree),
     CASES("الحالات", Icons.Filled.FolderOpen),
-    SETTINGS("الإعدادات", Icons.Filled.Settings),
-    SEARCH("بحث", Icons.Filled.TravelExplore)
+    SEARCH("بحث", Icons.Filled.TravelExplore),
+    SETTINGS("الإعدادات", Icons.Filled.Settings)
 }
 
 @Composable
@@ -130,8 +137,8 @@ fun WorkbenchApp() {
                 DashboardSnapshot(
                     stats = store.stats(),
                     findings = store.recentFindings(8),
-                    entities = store.entities(100),
-                    relations = store.relations(100),
+                    entities = store.entities(1_000),
+                    relations = store.relations(1_000),
                     cases = store.cases(100)
                 )
             }
@@ -477,6 +484,7 @@ private fun SectionHeader(title: String, subtitle: String) {
 
 @Composable
 private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
     var domain by rememberSaveable { mutableStateOf("") }
     var includeCt by rememberSaveable { mutableStateOf(true) }
     var includeAdvanced by rememberSaveable { mutableStateOf(true) }
@@ -551,25 +559,48 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                 withContext(Dispatchers.IO) {
                                     val rootId = store.upsertEntity(result.target, "DOMAIN", "User supplied", 100)
                                     result.records.forEach { item ->
-                                        val nodeKind = item.kind
-                                        val nodeId = store.upsertEntity(item.value, nodeKind, item.source, item.confidence)
+                                        val entityValue = when (item.kind) {
+                                            "DNS_NS" -> item.value.trim().trimEnd('.')
+                                            "DNS_MX" -> item.value.trim().substringAfter(' ', item.value).trim().trimEnd('.')
+                                            else -> item.value
+                                        }
+                                        val stableEntity = item.kind in setOf("DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "SUBDOMAIN", "RDAP_REGISTRAR")
+                                        // Status codes, header names, titles, and text values are properties of this
+                                        // target, not globally unique entities. Scope their keys to stop false hubs.
+                                        val nodeKind = if (stableEntity || item.kind == "WAYBACK_SNAPSHOT") item.kind else "${item.kind}@${result.target}"
+                                        val nodeId = store.upsertEntity(entityValue, nodeKind, item.source, item.confidence)
+                                        val relation = when (item.kind) {
+                                            "DNS_A", "DNS_AAAA" -> "RESOLVES_TO"
+                                            "DNS_NS" -> "USES_NAMESERVER"
+                                            "DNS_MX" -> "USES_MAIL_EXCHANGE"
+                                            "SUBDOMAIN" -> "SUBDOMAIN_OF"
+                                            "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
+                                            "RDAP_REGISTRAR" -> "REGISTERED_THROUGH"
+                                            "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED" -> "REGISTRATION_METADATA_FOR"
+                                            "HTTPS_REDIRECT" -> "REDIRECTS_TO"
+                                            "WEB_IMAGE", "WEB_PREVIEW_IMAGE" -> "HAS_PUBLIC_IMAGE"
+                                            "WEB_TITLE" -> "HAS_PAGE_TITLE"
+                                            "DNS_TXT" -> "HAS_DNS_TEXT_RECORD"
+                                            "HTTPS_STATUS", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY", "TECH_META_GENERATOR", "SECURITY_HEADER_NOT_OBSERVED" -> "HAS_OBSERVED_PROPERTY"
+                                            else -> "OBSERVED_DURING_RECON"
+                                        }
+                                        val rootToNode = item.kind in setOf(
+                                            "DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "HTTPS_REDIRECT",
+                                            "WEB_IMAGE", "WEB_PREVIEW_IMAGE", "WEB_TITLE", "DNS_TXT",
+                                            "HTTPS_STATUS", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY",
+                                            "TECH_META_GENERATOR", "SECURITY_HEADER_NOT_OBSERVED", "RDAP_REGISTRAR"
+                                        )
                                         store.addEdge(
-                                            fromId = nodeId,
-                                            toId = rootId,
-                                            relation = when (item.kind) {
-                                                "SUBDOMAIN" -> "SUBDOMAIN_OF"
-                                                "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
-                                                "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED", "RDAP_REGISTRAR" -> "REGISTRATION_DATA_FOR"
-                                                "HTTPS_STATUS", "HTTPS_REDIRECT", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY", "TECH_META_GENERATOR", "WEB_TITLE", "SECURITY_HEADER_NOT_OBSERVED" -> "WEB_METADATA_FOR"
-                                                else -> "OBSERVED_FOR"
-                                            },
+                                            fromId = if (rootToNode) rootId else nodeId,
+                                            toId = if (rootToNode) nodeId else rootId,
+                                            relation = relation,
                                             source = item.source,
                                             confidence = item.confidence
                                         )
                                         store.addFinding(
                                             entityId = rootId,
                                             title = item.kind.replace('_', ' '),
-                                            detail = "${item.value}\n${item.sourceUrl}",
+                                            detail = "${item.value}\n${item.detail}\n${item.sourceUrl}",
                                             source = item.source,
                                             severity = "info"
                                         )
@@ -629,7 +660,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
             if (result.records.isNotEmpty()) {
                 SectionHeader("النتائج المكتشفة", "${result.records.size} نتيجة محفوظة في قاعدة البيانات المحلية")
                 result.records.forEach { record ->
-                    RecordCard(record.kind, record.value, record.source, record.confidence)
+                    RecordCard(record, onOpen = { runCatching { uriHandler.openUri(record.sourceUrl) } })
                 }
             } else {
                 EmptyState(Icons.Filled.Search, "لم تُعد المصادر سجلات", "قد يكون النطاق غير موجود أو أن المصدر حدّ من الطلبات. راجع الملاحظات أدناه.")
@@ -684,26 +715,64 @@ private fun SummaryPill(text: String, color: Color) {
 }
 
 @Composable
-private fun RecordCard(kind: String, value: String, source: String, confidence: Int) {
+private fun RecordCard(record: ReconRecord, onOpen: () -> Unit) {
     Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = WorkbenchColors.Surface,
-        shape = RoundedCornerShape(15.dp),
+        shape = RoundedCornerShape(16.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth().padding(13.dp),
-            verticalAlignment = Alignment.Top,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Box(Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(WorkbenchColors.Teal.copy(alpha = 0.10f)), contentAlignment = Alignment.Center) {
-                androidx.compose.material3.Icon(Icons.Filled.Dns, contentDescription = null, tint = WorkbenchColors.Teal, modifier = Modifier.size(18.dp))
+            Row(
+                verticalAlignment = Alignment.Top,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    Modifier.size(34.dp).clip(RoundedCornerShape(10.dp)).background(WorkbenchColors.Teal.copy(alpha = 0.10f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.Icon(
+                        if (record.kind.contains("IMAGE")) Icons.Filled.Language else Icons.Filled.Dns,
+                        contentDescription = null,
+                        tint = WorkbenchColors.Teal,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(record.kind.replace('_', ' '), color = WorkbenchColors.Teal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text(record.value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
+                    Text(record.source, color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                }
+                Text("${record.confidence}%", color = WorkbenchColors.TextSecondary, fontSize = 11.sp)
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(kind.replace('_', ' '), color = WorkbenchColors.Teal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(value, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
-                Text(source, color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+            if (!record.previewImageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = record.previewImageUrl,
+                    contentDescription = "معاينة صورة مرتبطة بالنتيجة",
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 190.dp).clip(RoundedCornerShape(12.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
             }
-            Text("$confidence%", color = WorkbenchColors.TextSecondary, fontSize = 11.sp)
+            if (record.detail.isNotBlank()) {
+                Text(record.detail, color = WorkbenchColors.TextSecondary, fontSize = 10.sp, lineHeight = 16.sp)
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                androidx.compose.material3.Icon(Icons.Filled.OpenInNew, contentDescription = "فتح المصدر", tint = WorkbenchColors.Teal, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(
+                    if (record.kind == "WAYBACK_SNAPSHOT") "فتح اللقطة المؤرشفة" else "فتح المصدر",
+                    color = WorkbenchColors.Teal,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
@@ -735,6 +804,12 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
             }
         }
 
+        val insights = remember(entities, relations) {
+            LocalIntelligenceEngine.analyze(entities, relations)
+        }
+        SectionHeader("المحلل المحلي", "اقتراحات قابلة للتفسير مبنية على العلاقات المحفوظة فقط")
+        insights.forEach { insight -> IntelligenceInsightCard(insight) }
+
         if (relations.isEmpty()) {
             EmptyState(
                 Icons.Filled.AccountTree,
@@ -746,7 +821,7 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
         }
 
         if (entities.isNotEmpty()) {
-            SectionHeader("مخزن الكيانات", "${entities.size} كياناً في أحدث 100 نتيجة")
+            SectionHeader("مخزن الكيانات", "${entities.size} كياناً في مجموعة التحليل المحلي")
             entities.take(25).forEach { entity ->
                 Surface(
                     color = WorkbenchColors.Surface,
@@ -774,9 +849,12 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
 
 @Composable
 private fun GraphNetwork(relations: List<RelationRow>) {
-    val groups = relations.take(80).groupBy { it.toValue }
+    val groupedByHub = relations.take(300).groupBy { relationHubValue(it) }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        groups.forEach { (hub, links) ->
+        groupedByHub.forEach { (hub, hubEvidence) ->
+            val relationships = hubEvidence.groupBy {
+                listOf(it.relation, relationLeafKind(it), relationLeafValue(it)).joinToString("\u001F")
+            }
             Surface(
                 color = WorkbenchColors.Surface,
                 shape = RoundedCornerShape(20.dp),
@@ -794,35 +872,68 @@ private fun GraphNetwork(relations: List<RelationRow>) {
                             Text("الكيان المرجعي", color = WorkbenchColors.Teal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Text(hub, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         }
-                        SummaryPill("${links.size} روابط", WorkbenchColors.Teal)
+                        SummaryPill("${relationships.size} علاقات", WorkbenchColors.Teal)
                     }
                     HorizontalDivider(color = WorkbenchColors.Border)
-                    links.forEachIndexed { index, relation ->
+                    relationships.values.forEachIndexed { index, evidence ->
+                        val relation = evidence.maxByOrNull { it.confidence } ?: return@forEachIndexed
+                        val sources = evidence.map { it.source }.filter(String::isNotBlank).distinct()
                         Surface(
                             color = WorkbenchColors.SurfaceElevated,
                             shape = RoundedCornerShape(13.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (sources.size > 1) WorkbenchColors.Teal.copy(alpha = 0.45f) else WorkbenchColors.Border
+                            )
                         ) {
                             Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber))
+                                    Box(
+                                        Modifier.size(7.dp).clip(CircleShape).background(
+                                            if (sources.size > 1 || relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber
+                                        )
+                                    )
                                     Text(relationDescription(relation.relation), color = WorkbenchColors.Violet, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.weight(1f))
+                                    if (sources.size > 1) SummaryPill("${sources.size} مصادر", WorkbenchColors.Teal)
                                 }
-                                Text(relation.fromValue, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
+                                Text(relationLeafValue(relation), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     androidx.compose.material3.Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = WorkbenchColors.TextSecondary, modifier = Modifier.size(14.dp))
-                                    Text("يرتبط بالكيان المرجعي أعلاه", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                                    Text("ارتباط مبني على الدليل المحفوظ", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        "المصادر: ${sources.ifEmpty { listOf("غير محدد") }.joinToString(" · ")}",
+                                        color = WorkbenchColors.TextSecondary,
+                                        fontSize = 9.sp,
+                                        lineHeight = 14.sp
+                                    )
+                                    Text(
+                                        "أدلة محفوظة: ${evidence.size} · آخر رصد: ${formatTime(evidence.maxOf { it.observedAt })}",
+                                        color = WorkbenchColors.TextSecondary,
+                                        fontSize = 9.sp
+                                    )
+                                    if (sources.size > 1) {
+                                        Text(
+                                            "تعدد المصادر ملاحظة مفيدة لكنه لا يضمن استقلال قواعد البيانات أو مصادرها الأصلية.",
+                                            color = WorkbenchColors.Amber,
+                                            fontSize = 9.sp,
+                                            lineHeight = 14.sp
+                                        )
+                                    }
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    horizontalArrangement = Arrangement.End,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text("الدليل: ${relation.source}", color = WorkbenchColors.TextSecondary, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        Text("العلاقة ${index + 1} · مصدر محفوظ", color = WorkbenchColors.TextSecondary, fontSize = 9.sp)
-                                    }
-                                    Text("الثقة ${relation.confidence}%", color = if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "الثقة الإرشادية ${evidence.maxOf { it.confidence }}%",
+                                        color = if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
@@ -831,7 +942,7 @@ private fun GraphNetwork(relations: List<RelationRow>) {
             }
         }
         Text(
-            "مهم: درجة الثقة تقدير إرشادي للمصدر وليست احتمالاً إحصائياً. تشابه القيمة أو ورودها في أرشيف لا يثبت أن الأصل يعمل حالياً.",
+            "مهم: لا يُنشأ ارتباط اعتماداً على تشابه الاسم فقط. درجة الثقة إرشادية وليست احتمالاً إحصائياً؛ والتقارب في IP أو الشهادات لا يثبت ملكية مشتركة.",
             color = WorkbenchColors.TextSecondary,
             fontSize = 10.sp,
             lineHeight = 16.sp
@@ -839,14 +950,64 @@ private fun GraphNetwork(relations: List<RelationRow>) {
     }
 }
 
+private fun isParentToChildRelation(relation: String): Boolean = relation in setOf(
+    "RESOLVES_TO", "USES_NAMESERVER", "USES_MAIL_EXCHANGE", "REDIRECTS_TO",
+    "HAS_PUBLIC_IMAGE", "HAS_PAGE_TITLE", "HAS_DNS_TEXT_RECORD", "HAS_OBSERVED_PROPERTY",
+    "REGISTERED_THROUGH"
+)
+
+private fun relationHubValue(relation: RelationRow): String =
+    if (isParentToChildRelation(relation.relation)) relation.fromValue else relation.toValue
+
+private fun relationLeafKind(relation: RelationRow): String =
+    if (isParentToChildRelation(relation.relation)) relation.toKind else relation.fromKind
+
+private fun relationLeafValue(relation: RelationRow): String =
+    if (isParentToChildRelation(relation.relation)) relation.toValue else relation.fromValue
+
 private fun relationDescription(relation: String): String = when (relation) {
-    "SUBDOMAIN_OF" -> "نطاق فرعي موثق ضمن بيانات الشهادات"
-    "ARCHIVED_VERSION_OF" -> "لقطة محفوظة في الأرشيف"
-    "REGISTRATION_DATA_FOR" -> "بيانات تسجيل عامة للنطاق"
-    "WEB_METADATA_FOR" -> "بيانات مستخرجة من استجابة HTTPS"
-    "MATCHED_NEWS" -> "مقالة ظهرت في نتائج البحث الإخباري"
-    "OBSERVED_FOR" -> "سجل مرصود أثناء استطلاع النطاق"
+    "RESOLVES_TO" -> "سجل DNS يربط النطاق بعنوان IP"
+    "USES_NAMESERVER" -> "سجل NS يشير إلى خادم أسماء"
+    "USES_MAIL_EXCHANGE" -> "سجل MX يحدد خادم بريد"
+    "SUBDOMAIN_OF" -> "اسم نطاق فرعي مكتشف من مصدر عام"
+    "ARCHIVED_VERSION_OF" -> "لقطة مؤرشفة لهذا العنوان"
+    "REGISTERED_THROUGH" -> "سجل RDAP يذكر جهة التسجيل"
+    "REGISTRATION_METADATA_FOR" -> "بيانات تسجيل RDAP للنطاق"
+    "REDIRECTS_TO" -> "استجابة HTTPS أعادت التوجيه إلى العنوان"
+    "HAS_PUBLIC_IMAGE" -> "صورة ظاهرة في HTML العام"
+    "HAS_PAGE_TITLE" -> "عنوان صفحة مستخرج من HTML"
+    "HAS_DNS_TEXT_RECORD" -> "قيمة TXT مرصودة في DNS"
+    "HAS_OBSERVED_PROPERTY" -> "خاصية مرصودة في استجابة الويب"
+    "OBSERVED_DURING_RECON" -> "قيمة رُصدت أثناء الاستطلاع"
+    "MATCHED_NEWS" -> "مقالة ظهرت في مصدر نتائج الأخبار"
+    "PUBLIC_PROFILE_RESULT_FOR" -> "صفحة عامة ظهرت في نتائج هذا البحث"
     else -> relation.replace('_', ' ')
+}
+
+@Composable
+private fun IntelligenceInsightCard(insight: LocalIntelligenceInsight) {
+    val accent = when (insight.priority) {
+        1 -> WorkbenchColors.Amber
+        2 -> WorkbenchColors.Violet
+        3 -> WorkbenchColors.Teal
+        else -> WorkbenchColors.Blue
+    }
+    Surface(
+        color = WorkbenchColors.Surface,
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.40f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(8.dp).clip(CircleShape).background(accent))
+                Text(insight.title, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                if (insight.evidenceCount > 0) Text("${insight.evidenceCount} دليل", color = accent, fontSize = 9.sp)
+            }
+            Text(insight.explanation, color = WorkbenchColors.TextSecondary, fontSize = 11.sp, lineHeight = 17.sp)
+            Text("الخطوة المقترحة: ${insight.recommendation}", color = accent, fontSize = 11.sp, lineHeight = 17.sp)
+        }
+    }
 }
 
 @Composable
@@ -981,7 +1142,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: 
                 }
             }
         }
-        Text("OSINT Workbench · 0.1.0 · Prototype", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("OSINT Workbench · 0.3.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

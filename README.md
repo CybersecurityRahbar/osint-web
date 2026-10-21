@@ -1,69 +1,69 @@
 # OSINT Workbench
 
-**OSINT Workbench** is an offline-first Android application for collecting public information, organizing evidence, exploring technical relationships, and exporting readable investigation reports.
+**OSINT Workbench** is an offline-first Android OSINT workbench for collecting publicly available information, preserving evidence, and building explainable technical relationships without a private backend or a bundled large language model.
 
-> Prototype status: v0.2.0 (versionCode 2), merged into main. It is not a replacement for Nmap's active network scanning or SpiderFoot's wide plugin ecosystem. This app currently focuses on passive/public sources and selected public APIs.
+> **Prototype status: v0.3.0-preview.** It is an actively developed prototype, not a complete replacement for SpiderFoot, Maltego, or active network-scanning tools.
 
-## What is being added in this iteration
+## Domain intelligence
 
-### Domain intelligence
-- DNS over HTTPS for A, AAAA, NS, MX, TXT, and CAA records with Cloudflare and Google resolver fallback.
-- Optional certificate-transparency search through crt.sh.
-- Optional public RDAP registration status/dates/registrar metadata.
-- Optional Internet Archive Wayback snapshots.
-- HTTPS status, redirect, HTML title/generator hints, selected response headers, and security-header observations.
-- Source warnings, timeouts, URL provenance, and confidence estimates with explicit limits.
+- DNS over HTTPS for A, AAAA, NS, MX, TXT, and CAA records using Cloudflare and Google Public DNS fallback.
+- Certificate Transparency lookup through crt.sh.
+- Optional RDAP registration metadata.
+- Internet Archive Wayback snapshot discovery with each snapshot linked to the actual archived URL.
+- Best-effort extraction of social-preview / public image URLs from captured Wayback pages and the live site's public HTML.
+- HTTPS status, redirects, selected response headers, HTML title and generator hints.
+- Archive/public-image thumbnails where available; result cards retain source attribution and can open the underlying source.
+- Per-source warnings and timeouts. A missing record is not proof of absence, and an archive capture does not mean the page is online today.
 
-### Public identifier research
-- Search modes for a name, username, phone number, and email.
-- In-app API results from GitHub public users search and Wikidata.
-- Provider-specific public search links for other engines and indexed social pages. Links open only when the user taps them; the app does not claim that a search link confirms an account or its owner.
-- Phone/email modes do not perform subscriber lookup, private-data extraction, or breach-password searches.
+## Automatic public identifier search
 
-### News
-- Search through GDELT DOC API with an Arabic Google News RSS fallback.
-- Store result titles, source domains, URLs, timestamps/language/country metadata where available.
-- Network/region restrictions may prevent one or both sources from returning data.
+- Search modes for names, usernames, phone numbers, and email addresses.
+- Expands queries into multiple public-index searches (including Reddit-indexed pages and public caller-report directories for numbers).
+- Fetches indexed public results from DuckDuckGo HTML with a Lite fallback and uses the public Instant Answer endpoint as a small supplementary fallback, rather than showing only pre-made links.
+- Ranks matches deterministically: exact phone digits, exact email/username hits and title/token overlap rise above vague results. The relevance score is explicitly heuristic, not a probability.
+- Combines available API results from GitHub public users search and Wikidata for suitable queries.
+- Normalizes international-format phone numbers offline with Google's libphonenumber metadata and displays numbering-plan information only. It does **not** reveal a subscriber, confirm that a number is active, or identify its owner.
+- Provider links remain available as fallbacks. Some result pages may be blocked, rate-limited, or changed; failure warnings remain visible.
+- Does not authenticate to social networks, bypass access controls, or query private password/breach databases.
 
-### Local evidence, relations, and reports
-- SQLite stores entities, evidence, relationships, scans, and case workspaces.
-- Relationship view groups observed entities under a reference entity and displays relation meaning, source, and confidence; it is not a claim of personal association.
-- Each search stores its own JSON payload, allowing a standalone HTML or JSON report for that specific search.
-- Full workspace HTML and JSON exports.
-- JSON backup import is additive and deduplicates matching records; it does not delete existing records.
-- Android's document picker lets the user choose where an export is saved; a report can also be shared using the Android share sheet.
-- The Settings page shows the private database path. It is intentionally stored in the app's internal database directory, not in a public Downloads folder.
+## Multi-source news
+
+- Concurrent search through GDELT DOC API, Google News RSS, and publisher-scoped RSS queries for Reuters, Associated Press, BBC News, Al Jazeera (English and Arabic), DW, France 24, The Guardian, CNN, and Al Arabiya.
+- Each article retains a publisher label, source domain, click-through URL, publication date when provided, language/country metadata, and an image URL when the source provides one.
+- Source failures are isolated; the screen can show partial results plus warnings.
+- No news provider guarantees comprehensive coverage, and image availability varies by feed.
+
+## Evidence and local intelligence
+
+- SQLite persists entities, evidence, scan payloads, relationships, and case workspaces locally.
+- Relationship types distinguish DNS resolution, nameservers, mail exchanges, subdomains, archive captures, redirects, images, registration metadata, and observed web properties.
+- SQLite schema v3 preserves the same relation when it is supported by multiple recorded sources instead of overwriting the prior source. The graph groups matching edges and displays the stored sources and observations.
+- Repeated generic values (for example, an HTTP status or a page title) are scoped to the observed target to reduce accidental global “hub” relationships.
+- An explainable, offline rule engine highlights shared-IP observations, stale/weak evidence, missing data, and suggested next verification steps. It does not invent identity links from name similarity.
+- Confidence values are heuristic source-quality indicators, not calibrated statistical probabilities.
+
+## Privacy and limitations
+
+- No private backend, bundled large LLM, or huge local breach database is required.
+- Live collection needs network access. Carrier, country, DNS, source, and rate-limit restrictions may still cause empty results.
+- Automatic identifier lookup is based on public indexes and permitted public APIs, not on a universal, authoritative phone-owner database. A zero-result response does not prove that information does not exist.
+- The app's SQLite database **is not encrypted at rest yet**; avoid storing highly sensitive data in the prototype.
+- GitHub Actions builds a **debug preview** with application ID `com.cyberphantom.osintworkbench.preview`, so it can be installed side-by-side with the original `com.cyberphantom.osintworkbench` app and will not replace its private database. Debug keys may change between CI runs; export JSON from a preview before upgrading to another preview when possible.
+- CI verifies compilation/tests and APK packaging; it does not validate each source's live response on every carrier or phone.
 
 ## Build
 
-Requirements: JDK 17 and Android SDK API 36. Use the included Gradle Wrapper:
+Requirements: JDK 17 and Android SDK API 36. The Gradle Wrapper downloads the pinned Gradle version on first use:
 
 ```bash
 ./gradlew testDebugUnitTest
 ./gradlew assembleDebug
 ```
 
-Debug APK path:
+APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
-`app/build/outputs/apk/debug/app-debug.apk`
-
-GitHub Actions runs tests, assembles a debug APK, and uploads the `osint-workbench-debug-apk` artifact.
-
-## Architecture
-- Kotlin + Jetpack Compose / Material 3.
-- Local SQLite with an additive v1→v2 schema migration that preserves older local data.
-- Coroutines for network collection and background storage/export work.
-- Deterministic normalization and evidence linking; no downloaded large LLM or large breach database is required.
-- CI build/test workflow.
-
-## Important limitations
-- **The database is not encrypted at rest yet.** Avoid storing highly sensitive material in this prototype.
-- Internet access is required for live-source queries. In some countries/carrier networks, DNS-over-HTTPS, RDAP, Wayback, GDELT, or Google News RSS may be blocked or unreliable. VPN can help reach sources, but it does not guarantee results.
-- DNS/CT/archives can be incomplete or stale. A name in a certificate or archive does not prove the host is active now.
-- A missing security header from one response is only an observation, not proof of a vulnerability.
-- GitHub/Wikidata results are API results. Searches for phones, emails, and many social sites are explicit public web-search links rather than automatic scraping of every platform.
-- Passive recon is not the same as Nmap port scanning or SpiderFoot's many modules; active scanning and broad integrations are not yet included.
-- The feature iteration passed GitHub Actions unit tests and debug APK assembly. Live-source behavior and export/restore flows still need validation on a real Android device.
+GitHub Actions runs unit tests, builds a debug APK, and uploads `osint-workbench-debug-apk`.
 
 ## Cumulative context
-See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for decisions, implementation notes, tests, issues, and next steps.
+
+See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) for the user's requirements, implementation decisions, CI results, limitations, and next steps.

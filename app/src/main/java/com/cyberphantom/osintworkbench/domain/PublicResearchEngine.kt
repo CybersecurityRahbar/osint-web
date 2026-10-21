@@ -28,7 +28,8 @@ data class PublicProfileResult(
     val title: String,
     val description: String,
     val url: String,
-    val confidence: Int
+    val confidence: Int,
+    val relevanceScore: Int = 0
 )
 
 data class NewsArticle(
@@ -37,7 +38,10 @@ data class NewsArticle(
     val domain: String,
     val publishedAt: String,
     val language: String = "",
-    val sourceCountry: String = ""
+    val sourceCountry: String = "",
+    val publisherName: String = "",
+    val imageUrl: String? = null,
+    val provider: String = "GDELT DOC API"
 )
 
 data class NewsSearchResult(
@@ -101,8 +105,13 @@ class PublicResearchEngine {
                 providers += PublicSearchLink("TikTok / X / YouTube", "بحث مفهرس عام عبر المنصات", "https://www.google.com/search?q=${enc("(\"$username\") (site:tiktok.com OR site:x.com OR site:youtube.com)")}")
             }
             IdentifierKind.PHONE -> {
+                val digits = quoted.filter(Char::isDigit)
                 providers += PublicSearchLink("بحث الرقم بصيغته", "النتائج العامة فقط؛ لا يكشف مالك الرقم يقيناً", "https://www.google.com/search?q=${enc("\"$quoted\"")}")
-                providers += PublicSearchLink("بحث بصيغة الأرقام", "قد يجد نسخاً منشورة بدون فواصل", "https://www.bing.com/search?q=${enc("\"${quoted.replace(Regex("\\D"), "")}\"")}")
+                providers += PublicSearchLink("بحث بصيغة الأرقام", "قد يجد نسخاً منشورة بدون فواصل", "https://www.bing.com/search?q=${enc("\"$digits\"")}")
+                providers += PublicSearchLink("Tellows", "بحث في الصفحات العامة المفهرسة لبلاغات الأرقام", "https://duckduckgo.com/?q=${enc("site:tellows.com \"$digits\"")}")
+                providers += PublicSearchLink("Should I Answer", "بحث في الصفحات العامة المفهرسة لتقارير المكالمات", "https://duckduckgo.com/?q=${enc("site:shouldianswer.com \"$digits\"")}")
+                providers += PublicSearchLink("Sync.ME", "بحث مفهرس فقط؛ لا يمثل دليلاً على مالك الرقم", "https://duckduckgo.com/?q=${enc("site:sync.me \"$digits\"")}")
+                providers += PublicSearchLink("Reddit", "بحث عام في تجارب/مشاركات مفهرسة", "https://www.reddit.com/search/?q=${enc("\"$digits\"")}")
             }
             IdentifierKind.EMAIL -> {
                 providers += PublicSearchLink("بحث البريد في الويب", "النتائج المنشورة علناً فقط", "https://www.google.com/search?q=${enc("\"$query\"")}")

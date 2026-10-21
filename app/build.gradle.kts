@@ -9,11 +9,22 @@ android {
 
     defaultConfig {
         applicationId = "com.cyberphantom.osintworkbench"
+        manifestPlaceholders["appLabel"] = "OSINT Workbench"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    // CI debug APKs are signed with ephemeral debug keys. Use a separate package ID
+    // so a new preview can be installed alongside an older app without replacing its data.
+    buildTypes {
+        getByName("debug") {
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+            manifestPlaceholders["appLabel"] = "OSINT Workbench Preview"
+        }
     }
 
     buildFeatures {
@@ -46,6 +57,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    implementation("com.googlecode.libphonenumber:libphonenumber:9.0.41")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

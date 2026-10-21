@@ -124,7 +124,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("إظهار الصور في النتائج", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "تشغيل/إيقاف الصور المصغرة في بحث الويب والأخبار؛ صور Commons متاحة عند تفعيلها.",
+                    "تشغيل/إيقاف الصور المصغرة في بحث الويب والأخبار؛ يحاول Bing Images وSearXNG وCommons.",
                     fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
                 )
             }
@@ -161,9 +161,9 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                     )
                     Text(
                         when (kind) {
-                            IdentifierKind.NAME -> "سيبحث التطبيق في قواعد بيانات عامة محددة، ويجهز روابط بحث إضافية في محركات الويب."
+                            IdentifierKind.NAME -> "بحث تلقائي متعدد المحركات والواجهات العامة، ثم روابط بحث إضافية عند الحاجة. تختلف النتائج بحسب ما تسمح به المصادر."
                             IdentifierKind.USERNAME -> "تظهر نتائج GitHub العامة داخل التطبيق، مع روابط بحث مفهرس لمنصات أخرى. الروابط لا تثبت وحدها ملكية الحساب."
-                            IdentifierKind.PHONE -> "عند الضغط على البحث، يحاول التطبيق جلب نتائج عامة مفهرسة من DuckDuckGo وBing وGoogle وYahoo، مع توسيع الاستعلامات. وقد تُحجب بعض المحركات أو تغيّر HTML؛ لا يكشف هذا مالك الرقم أو نشاطه يقيناً."
+                            IdentifierKind.PHONE -> "عند الضغط على البحث، يحاول التطبيق جلب نتائج عامة مفهرسة من عدة محركات، ويعرض مصدر كل نتيجة وصوراً اختيارية. قد تُحجب محركات أو تغيّر صفحاتها؛ لا يكشف البحث مالك الرقم أو نشاطه يقيناً."
                             IdentifierKind.EMAIL -> "البحث المباشر يجلب الصفحات العامة المفهرسة تلقائياً. تتم مشاركة عبارة البحث مع مزود البحث العام؛ لا نبحث في قواعد كلمات المرور أو التسريبات الخاصة."
                         },
                         color = WorkbenchColors.TextSecondary,
@@ -182,7 +182,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         colors = researchFieldColors()
                     )
                     Text(
-                        "يجمع البحث بين GDELT DOC API وGoogle News RSS وبحث مقيّد بناشرين عالميين وعرب. يُعرض اسم الناشر لكل خبر، وقد تختلف تغطية المصادر أو تمنع بعض الطلبات.",
+                        "يجمع البحث بين GDELT DOC API ونسخ Google News RSS العربية والإنجليزية وBing News وSearXNG، مع محاولة بديلة لناشرين معروفين إذا كانت النتائج الأساسية فارغة. يُعرض اسم المصدر وتُذكر أخطاء المصادر عند توفرها.",
                         color = WorkbenchColors.TextSecondary,
                         fontSize = 11.sp,
                         lineHeight = 18.sp
@@ -204,6 +204,8 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                 profiles = emptyList()
                                 links = emptyList()
                                 news = null
+                                phoneMetadata = null
+                                sourceWarnings = emptyList()
                                 searchReport = null
                                 val startedAt = System.currentTimeMillis()
                                 try {

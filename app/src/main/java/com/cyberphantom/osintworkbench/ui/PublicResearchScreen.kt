@@ -163,7 +163,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         when (kind) {
                             IdentifierKind.NAME -> "سيبحث التطبيق في قواعد بيانات عامة محددة، ويجهز روابط بحث إضافية في محركات الويب."
                             IdentifierKind.USERNAME -> "تظهر نتائج GitHub العامة داخل التطبيق، مع روابط بحث مفهرس لمنصات أخرى. الروابط لا تثبت وحدها ملكية الحساب."
-                            IdentifierKind.PHONE -> "عند الضغط على البحث، يجمع التطبيق النتائج العامة المفهرسة تلقائياً من DuckDuckGo، بما فيها صفحات Reddit وأدلة الإبلاغ العامة إن ظهرت. لا يكشف مالك الرقم أو نشاطه يقيناً."
+                            IdentifierKind.PHONE -> "عند الضغط على البحث، يحاول التطبيق جلب نتائج عامة مفهرسة من DuckDuckGo وBing وGoogle وYahoo، مع توسيع الاستعلامات. وقد تُحجب بعض المحركات أو تغيّر HTML؛ لا يكشف هذا مالك الرقم أو نشاطه يقيناً."
                             IdentifierKind.EMAIL -> "البحث المباشر يجلب الصفحات العامة المفهرسة تلقائياً. تتم مشاركة عبارة البحث مع مزود البحث العام؛ لا نبحث في قواعد كلمات المرور أو التسريبات الخاصة."
                         },
                         color = WorkbenchColors.TextSecondary,
@@ -182,7 +182,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         colors = researchFieldColors()
                     )
                     Text(
-                        "المصدر الحالي هو GDELT DOC API. تغطيته ولغاته وتوفره تختلف، لذلك لن تعني النتائج الصفرية عدم وجود أخبار.",
+                        "يجمع البحث بين GDELT DOC API وGoogle News RSS وبحث مقيّد بناشرين عالميين وعرب. يُعرض اسم الناشر لكل خبر، وقد تختلف تغطية المصادر أو تمنع بعض الطلبات.",
                         color = WorkbenchColors.TextSecondary,
                         fontSize = 11.sp,
                         lineHeight = 18.sp

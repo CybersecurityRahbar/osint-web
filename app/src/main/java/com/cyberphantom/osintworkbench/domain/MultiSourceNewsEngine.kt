@@ -6,6 +6,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -44,22 +46,24 @@ class MultiSourceNewsEngine {
         val limit = maxRecords.coerceIn(1, 60)
 
         val outcomes = coroutineScope {
+            // Keep concurrency bounded: a phone should not bombard GDELT and ten RSS feeds at once.
+            val sourceSemaphore = Semaphore(4)
             val tasks = mutableListOf<kotlinx.coroutines.Deferred<SourceOutcome>>()
             tasks += async {
-                runCatching { queryGdelt(clean, limit) }.fold(
+                runCatching { sourceSemaphore.withPermit { queryGdelt(clean, limit) } }.fold(
                     { SourceOutcome("GDELT", it, null) },
                     { SourceOutcome("GDELT", emptyList(), it.message ?: "تعذر الوصول") }
                 )
             }
             tasks += async {
-                runCatching { queryGoogleNews(clean, limit, null) }.fold(
+                runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, limit, null) } }.fold(
                     { SourceOutcome("Google News RSS", it, null) },
                     { SourceOutcome("Google News RSS", emptyList(), it.message ?: "تعذر الوصول") }
                 )
             }
             publishers.forEach { publisher ->
                 tasks += async {
-                    runCatching { queryGoogleNews(clean, maxOf(5, limit / 2), publisher) }.fold(
+                    runCatching { sourceSemaphore.withPermit { queryGoogleNews(clean, maxOf(5, limit / 2), publisher) } }.fold(
                         { SourceOutcome(publisher.name, it, null) },
                         { SourceOutcome(publisher.name, emptyList(), it.message ?: "تعذر الوصول") }
                     )
@@ -92,8 +96,8 @@ class MultiSourceNewsEngine {
         val limit = maxRecords.coerceIn(1, 50)
         // Retry a simpler request if the richer one returns an HTML error page or is rate-limited.
         val endpoints = listOf(
-            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=ArtList&format=json&sort=DateDesc&maxrecords=$limit&timespan=7d",
-            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=ArtList&format=json&maxrecords=${minOf(limit, 20)}"
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=$limit&timespan=1week",
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&maxrecords=${minOf(limit, 20)}"
         )
         var lastFailure: Exception? = null
         for ((endpointIndex, endpoint) in endpoints.withIndex()) {
@@ -106,6 +110,8 @@ class MultiSourceNewsEngine {
                         val preview = raw.replace(Regex("\\s+"), " ").take(180)
                         throw IllegalStateException("GDELT returned non-JSON data: $preview", error)
                     }
+                    // A successful JSON response clears any transient failure from an earlier variant.
+                    lastFailure = null
                     val items = root.optJSONArray("articles") ?: JSONArray()
                     val articles = buildList {
                         for (index in 0 until items.length()) {

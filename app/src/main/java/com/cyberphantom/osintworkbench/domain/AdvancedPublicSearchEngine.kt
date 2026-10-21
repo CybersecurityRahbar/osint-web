@@ -160,18 +160,18 @@ class AdvancedPublicSearchEngine {
                 .map { it.copy(relevanceScore = calculateRelevance(query, kind, it, 0)) }
         } else emptyList()
 
-        // Image indexes often return multiple images from one publisher page. Deduplicate by
-        // the image URL for image records, and by the page URL for ordinary web records.
-        val merged = (baseResults + instantResults)
-            .distinctBy {
-                if (!it.imageUrl.isNullOrBlank()) "image:" + canonicalUrl(it.imageUrl)
-                else canonicalUrl(it.url)
-            }
-            .sortedWith(
-                compareByDescending<PublicProfileResult> { it.relevanceScore }
-                    .thenByDescending { it.confidence }
-            )
-            .take(limit)
+        // Keep image previews visible: exact text matches can otherwise push every image
+        // below the UI limit. Images are deduplicated by image URL; web records by page URL.
+        val uniqueBase = (baseResults + instantResults).distinctBy {
+            if (!it.imageUrl.isNullOrBlank()) "image:" + canonicalUrl(it.imageUrl)
+            else canonicalUrl(it.url)
+        }
+        val imageCandidates = uniqueBase.filter { !it.imageUrl.isNullOrBlank() }
+            .sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
+        val textCandidates = uniqueBase.filter { it.imageUrl.isNullOrBlank() }
+            .sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
+        val reservedImageSlots = minOf(imageCandidates.size, if (includeImages) maxOf(3, limit / 3) else 0)
+        val merged = imageCandidates.take(reservedImageSlots) + textCandidates.take(limit - reservedImageSlots)
 
         val warnings = (broadOutcome.warnings + if (shouldTryInstantAnswer && instantResults.isEmpty()) {
             listOf("لم يُرجع مصدر المعرفة الإضافي نتائج؛ لا يؤثر ذلك في نتائج محركات البحث الأخرى.")

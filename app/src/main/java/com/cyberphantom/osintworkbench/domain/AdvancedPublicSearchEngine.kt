@@ -61,10 +61,10 @@ class AdvancedPublicSearchEngine {
                 buildList {
                     add("\"$query\"")
                     if (digits != query) add("\"$digits\"")
-                    normalized.forEach { if (it != query && it != digits) add("\"$it\"") }
                     add("site:reddit.com \"$digits\"")
                     add("\"$digits\" (site:tellows.com OR site:shouldianswer.com OR site:sync.me)")
-                }.distinct().take(5)
+                    normalized.forEach { if (it != query && it != digits) add("\"$it\"") }
+                }.distinct().take(6)
             }
             IdentifierKind.EMAIL -> {
                 require(query.contains("@") && query.substringAfter("@").contains(".")) {

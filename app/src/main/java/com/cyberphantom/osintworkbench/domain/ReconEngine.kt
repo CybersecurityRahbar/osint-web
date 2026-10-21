@@ -370,7 +370,7 @@ class ReconEngine {
         )
         val captures = mutableListOf<ArchiveCapture>()
         var lastError: Exception? = null
-        for (endpoint in endpoints) {
+        for ((endpointIndex, endpoint) in endpoints.withIndex()) {
             try {
                 val json = JSONArray(getText(endpoint, timeoutMs = 8_000, maxAttempts = if (endpointIndex == 0) 2 else 1))
                 for (i in 0 until json.length()) {

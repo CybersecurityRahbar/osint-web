@@ -47,41 +47,59 @@ class MultiSourceNewsEngine {
         require(clean.length <= 180) { "عبارة البحث طويلة جداً." }
         val limit = maxRecords.coerceIn(1, 60)
 
-        val outcomes = coroutineScope {
-            // Keep concurrency bounded: a phone should not bombard GDELT and ten RSS feeds at once.
-            val sourceSemaphore = Semaphore(4)
+        var outcomes = coroutineScope {
+            val semaphore = Semaphore(4)
             val tasks = mutableListOf<kotlinx.coroutines.Deferred<SourceOutcome>>()
+            tasks += async { runSource(semaphore, "GDELT DOC API") { queryGdelt(clean, limit, includeImages) } }
             tasks += async {
-                runSource(sourceSemaphore, "GDELT") { queryGdelt(clean, limit, includeImages) }
-            }
-            tasks += async {
-                runSource(sourceSemaphore, "Google News RSS") { queryGoogleNews(clean, limit, null, includeImages) }
-            }
-            publishers.forEach { publisher ->
-                tasks += async {
-                    runSource(sourceSemaphore, publisher.name) {
-                        queryGoogleNews(clean, maxOf(5, limit / 2), publisher, includeImages)
-                    }
+                runSource(semaphore, "Google News RSS · Arabic") {
+                    queryGoogleNews(clean, limit, null, includeImages, "ar", "SA", "SA:ar", "Google News RSS · Arabic")
                 }
             }
+            tasks += async {
+                runSource(semaphore, "Google News RSS · English") {
+                    queryGoogleNews(clean, limit, null, includeImages, "en-US", "US", "US:en", "Google News RSS · English")
+                }
+            }
+            tasks += async { runSource(semaphore, "Bing News RSS") { queryBingNews(clean, limit, includeImages) } }
+            tasks += async { runSource(semaphore, "SearXNG News") { querySearxNews(clean, limit, includeImages) } }
             tasks.awaitAll()
+        }
+
+        if (outcomes.none { it.articles.isNotEmpty() }) {
+            val fallbacks = listOf(publishers[0], publishers[2], publishers[4], publishers[7])
+            val extra = coroutineScope {
+                val semaphore = Semaphore(3)
+                fallbacks.map { publisher ->
+                    async {
+                        runSource(semaphore, "Google News RSS · " + publisher.name) {
+                            queryGoogleNews(clean, maxOf(6, limit / 2), publisher, includeImages)
+                        }
+                    }
+                }.awaitAll()
+            }
+            outcomes = outcomes + extra
         }
 
         val articles = outcomes.flatMap { it.articles }
             .filter { it.title.isNotBlank() && it.url.startsWith("https://") }
             .distinctBy {
-                "${it.title.lowercase(Locale.ROOT).replace(Regex("\\s+"), " ").trim()}|" +
+                it.title.lowercase(Locale.ROOT).replace(Regex("\\s+"), " ").trim() + "|" +
                     it.publisherName.ifBlank { it.domain }.lowercase(Locale.ROOT)
             }
             .take(limit)
 
         val failed = outcomes.filter { it.error != null }
+        val emptySources = outcomes.filter { it.error == null && it.articles.isEmpty() }.map { it.source }
+        val failureText = failed.take(6).joinToString(" · ") { it.source + ": " + it.error }
         val warning = when {
-            articles.isEmpty() ->
-                "لم تُرجع مصادر الأخبار أي مقالات. قد تكون المصادر محجوبة أو لا تغطي هذه العبارة؛ النتيجة الصفرية لا تثبت عدم وجود أخبار."
-            failed.isNotEmpty() ->
-                "نتائج جزئية من ${outcomes.count { it.articles.isNotEmpty() }} مصدر. تعذرت بعض المصادر: " +
-                    failed.take(5).joinToString(" · ") { "${it.source}: ${it.error}" }
+            articles.isEmpty() -> {
+                "لم تُرجع مصادر الأخبار مقالات. " +
+                    (if (failureText.isBlank()) "لم يبلغ أي مصدر عن خطأ صريح." else "أخطاء المصادر: " + failureText) +
+                    (if (emptySources.isEmpty()) "" else " مصادر استجابت دون مقالات: " + emptySources.take(5).joinToString("، "))
+            }
+            failed.isNotEmpty() -> "نتائج جزئية من " + outcomes.count { it.articles.isNotEmpty() } +
+                " مصدر. تعذرت بعض المصادر: " + failureText
             else -> null
         }
         NewsSearchResult(clean, articles, warning)
@@ -110,7 +128,7 @@ class MultiSourceNewsEngine {
         val limit = maxRecords.coerceIn(1, 50)
         val cleanQuery = query.trim().replace(Regex("\\s+"), " ")
         // GDELT requires OR groups to be parenthesized; ungrouped user text can return HTTP 200 HTML errors.
-        val apiQuery = if (Regex("(?i)\\\\bOR\\\\b").containsMatchIn(cleanQuery) &&
+        val apiQuery = if (Regex("(?i)\\bOR\\b").containsMatchIn(cleanQuery) &&
             !cleanQuery.trim().startsWith("(")) "($cleanQuery)" else cleanQuery
         // First query is a fast recent-news request; the fallback widens the period and lowers the cap.
         val endpoints = listOf(
@@ -181,16 +199,75 @@ class MultiSourceNewsEngine {
         query: String,
         maxRecords: Int,
         publisher: Publisher?,
-        includeImages: Boolean
+        includeImages: Boolean,
+        languageOverride: String? = null,
+        countryOverride: String? = null,
+        editionOverride: String? = null,
+        providerOverride: String? = null
     ): List<NewsArticle> = withContext(Dispatchers.IO) {
-        val queryText = if (publisher == null) query else "$query site:${publisher.domain}"
-        val language = publisher?.language ?: "ar"
-        val country = publisher?.country ?: "YE"
-        val edition = publisher?.edition ?: "YE:ar"
-        val endpoint = "https://news.google.com/rss/search?q=${enc(queryText)}&hl=${enc(language)}&gl=${enc(country)}&ceid=${enc(edition)}"
-        val xml = getText(endpoint, 12_000, "application/rss+xml, application/xml, text/xml")
-        parseRss(xml, publisher, language, country, includeImages)
+        val queryText = if (publisher == null) query else query + " site:" + publisher.domain
+        val language = publisher?.language ?: languageOverride ?: "ar"
+        val country = publisher?.country ?: countryOverride ?: "YE"
+        val edition = publisher?.edition ?: editionOverride ?: "YE:ar"
+        val q = enc(queryText)
+        val hl = enc(language)
+        val gl = enc(country)
+        val ceid = enc(edition)
+        val endpoint = "https://news.google.com/rss/search?q=$q&hl=$hl&gl=$gl&ceid=$ceid"
+        val xml = getText(endpoint, 8_500, "application/rss+xml, application/xml, text/xml")
+        val label = providerOverride ?: if (publisher == null) "Google News RSS" else "Google News RSS · " + publisher.name
+        parseRss(xml, publisher, language, country, includeImages, label)
             .take(maxRecords.coerceIn(1, 60))
+    }
+
+    private suspend fun queryBingNews(query: String, maxRecords: Int, includeImages: Boolean): List<NewsArticle> = withContext(Dispatchers.IO) {
+        val q = enc(query)
+        val endpoint = "https://www.bing.com/news/search?q=$q&format=rss&setmkt=en-US"
+        val xml = getText(endpoint, 8_000, "application/rss+xml, application/xml, text/xml")
+        parseRss(xml, null, "en", "US", includeImages, "Bing News RSS")
+            .take(maxRecords.coerceIn(1, 60))
+    }
+
+    private suspend fun querySearxNews(query: String, maxRecords: Int, includeImages: Boolean): List<NewsArticle> = withContext(Dispatchers.IO) {
+        var lastError: Exception? = null
+        for (instance in listOf("https://searx.be", "https://search.disroot.org")) {
+            try {
+                val q = enc(query)
+                val endpoint = instance + "/search?q=$q&categories=news&format=json"
+                val root = JSONObject(getText(endpoint, 4_500, "application/json"))
+                val rows = root.optJSONArray("results") ?: JSONArray()
+                val articles = buildList {
+                    for (i in 0 until minOf(rows.length(), maxRecords * 3)) {
+                        val row = rows.optJSONObject(i) ?: continue
+                        val url = row.optString("url").takeIf { it.startsWith("https://") } ?: continue
+                        val title = row.optString("title").trim().takeIf(String::isNotBlank) ?: continue
+                        val domain = runCatching { URL(url).host.removePrefix("www.") }.getOrDefault("")
+                        val image = sequenceOf("thumbnail_src", "img_src", "thumbnail")
+                            .map { key -> row.optString(key).takeIf { it.startsWith("https://") } }
+                            .firstOrNull { it != null }
+                        add(
+                            NewsArticle(
+                                title = title,
+                                url = url,
+                                domain = domain,
+                                publishedAt = row.optString("publishedDate").ifBlank { row.optString("published_date") },
+                                language = "",
+                                sourceCountry = "",
+                                publisherName = row.optString("source").ifBlank { publisherLabel(domain) },
+                                imageUrl = image.takeIf { includeImages },
+                                provider = "SearXNG News"
+                            )
+                        )
+                        if (size >= maxRecords) break
+                    }
+                }
+                if (articles.isNotEmpty()) return@withContext articles.distinctBy { it.url }
+                lastError = IllegalStateException("أعاد SearXNG استجابة JSON دون مقالات")
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw lastError ?: IllegalStateException("تعذر الوصول إلى مصادر SearXNG News")
     }
 
     internal fun parseRss(
@@ -198,7 +275,8 @@ class MultiSourceNewsEngine {
         requestedPublisher: Publisher?,
         language: String,
         country: String,
-        includeImages: Boolean = true
+        includeImages: Boolean = true,
+        providerLabelOverride: String? = null
     ): List<NewsArticle> {
         require(xml.length <= 2_000_000) { "RSS response exceeds the parser size limit." }
         val factory = DocumentBuilderFactory.newInstance().apply {
@@ -230,7 +308,7 @@ class MultiSourceNewsEngine {
                     val child = children.item(childIndex) as? Element ?: continue
                     when (child.tagName.substringAfter(':').lowercase(Locale.ROOT)) {
                         "title" -> title = child.textContent.orEmpty().trim()
-                        "link" -> link = child.textContent.orEmpty().trim()
+                        "link" -> link = normalizeNewsUrl(child.textContent.orEmpty().trim())
                         "pubdate" -> publishedAt = child.textContent.orEmpty().trim()
                         "source" -> {
                             sourceUrl = child.getAttribute("url").orEmpty()
@@ -265,11 +343,26 @@ class MultiSourceNewsEngine {
                         sourceCountry = country,
                         publisherName = actualPublisher,
                         imageUrl = imageUrl.takeIf { includeImages && it.startsWith("https://") },
-                        provider = if (requestedPublisher == null) "Google News RSS" else "Google News RSS · ${requestedPublisher.name}"
+                        provider = providerLabelOverride ?: if (requestedPublisher == null) "Google News RSS" else "Google News RSS · " + requestedPublisher.name
                     )
                 )
             }
         }.distinctBy { "${it.title.lowercase(Locale.ROOT)}|${it.publisherName.lowercase(Locale.ROOT)}" }
+    }
+
+    private fun normalizeNewsUrl(raw: String): String {
+        if (!raw.startsWith("https://")) return raw
+        return runCatching {
+            val uri = URL(raw)
+            if (!uri.host.endsWith("bing.com") || !uri.path.contains("apiclick")) return@runCatching raw
+            val params = uri.query.orEmpty().split('&').mapNotNull { part ->
+                val pair = part.split('=', limit = 2)
+                if (pair.size == 2) pair[0] to pair[1] else null
+            }.toMap()
+            val encoded = params["url"] ?: params["u"]
+            val decoded = encoded?.let { java.net.URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+            decoded?.takeIf { it.startsWith("https://") } ?: raw
+        }.getOrDefault(raw)
     }
 
     private fun stripPublisherSuffix(title: String, publisher: String): String =

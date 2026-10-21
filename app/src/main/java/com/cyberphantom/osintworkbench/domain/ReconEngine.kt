@@ -524,6 +524,7 @@ class ReconEngine {
                 )
                 var location: String? = null
                 var isp: String? = null
+                var network: String? = null
                 var source = ""
                 var sourceUrl = ""
                 var failure: String? = null
@@ -546,7 +547,7 @@ class ReconEngine {
                         isp = connection?.optString("isp")?.takeIf { it.isNotBlank() && it != "null" } ?: org
                         val asn = connection?.optString("asn")?.takeIf { it.isNotBlank() && it != "null" }
                             ?: root.optString("asn").takeIf { it.isNotBlank() && it != "null" }
-                        val network = listOfNotNull(
+                        network = listOfNotNull(
                             org?.takeIf { !it.equals(isp, true) },
                             isp,
                             asn?.let { if (it.startsWith("AS", true)) it else "AS$it" }

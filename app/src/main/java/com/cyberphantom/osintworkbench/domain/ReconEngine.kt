@@ -408,10 +408,10 @@ class ReconEngine {
             }.orEmpty()
             val metaTags = Regex("(?is)<meta\\b[^>]*>").findAll(html).map { it.value }
             val imageValue = metaTags.firstNotNullOfOrNull { tag ->
-                val property = Regex("""(?is)\\b(?:property|name)\\s*=\\s*["']([^"']+)["']""")
+                val property = Regex("""(?is)\b(?:property|name)\s*=\s*["']([^"']+)["']""")
                     .find(tag)?.groupValues?.getOrNull(1).orEmpty()
                 if (!property.equals("og:image", true) && !property.equals("twitter:image", true)) return@firstNotNullOfOrNull null
-                Regex("""(?is)\\bcontent\\s*=\\s*["']([^"']+)["']""")
+                Regex("""(?is)\bcontent\s*=\s*["']([^"']+)["']""")
                     .find(tag)?.groupValues?.getOrNull(1)?.trim()
             } ?: return@withContext null
             val resolved = URL(URL(originalUrl), imageValue).toString()
@@ -635,7 +635,7 @@ class ReconEngine {
             if (!generator.isNullOrBlank()) result += ReconRecord("TECH_META_GENERATOR", generator, "HTML metadata", finalUrl, 66, "ترويسة مولّد قابلة للتعديل من مالك الصفحة.")
 
             fun htmlAttribute(tag: String, attribute: String): String? =
-                Regex("""(?is)\\b$attribute\\s*=\\s*["']([^"']+)["']""")
+                Regex("""(?is)\b$attribute\s*=\s*["']([^"']+)["']""")
                     .find(tag)?.groupValues?.getOrNull(1)?.trim()
 
             val imageMetaTags = Regex("(?is)<meta\\b[^>]*>").findAll(html).map { it.value }

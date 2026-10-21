@@ -155,7 +155,7 @@ class MultiSourceNewsEngine {
     internal fun parseGdeltResponse(root: JSONObject, includeImages: Boolean = true): List<NewsArticle> {
         val items = root.optJSONArray("articles") ?: JSONArray()
         return buildList {
-            for (index in 0 until items.length) {
+            for (index in 0 until items.length()) {
                 val item = items.optJSONObject(index) ?: continue
                 val url = item.optString("url").takeIf { it.startsWith("https://") } ?: continue
                 val title = item.optString("title").trim().takeIf(String::isNotBlank) ?: continue

@@ -104,6 +104,23 @@ class AdvancedPublicSearchEngineTest {
     }
 
     @Test
+    fun parsesGoogleStyleH3ResultsAndUnwrapsTheRedirectToTheSource() {
+        val html = """
+            <div class="MjjYud">
+              <a href="https://www.google.com/url?q=https%3A%2F%2Fexample.org%2Freport&sa=U">
+                <h3 class="LC20lb">Public report result</h3>
+              </a>
+            </div>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Google test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public report result", results.single().title)
+        assertEquals("https://example.org/report", results.single().url)
+    }
+
+    @Test
     fun expandedNameSearchIncludesSeveralPublicIndexSurfaces() {
         val queries = engine.buildSearchQueries("Ada Lovelace", IdentifierKind.NAME)
         assertTrue(queries.any { it.contains("reddit.com") })

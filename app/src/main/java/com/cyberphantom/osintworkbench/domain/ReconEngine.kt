@@ -96,7 +96,8 @@ class ReconEngine {
     suspend fun scanDomain(
         rawDomain: String,
         includeCertificateTransparency: Boolean,
-        includeArchiveAndMetadata: Boolean = true
+        includeArchiveAndMetadata: Boolean = true,
+        includeActiveChecks: Boolean = false
     ): ScanReport {
         val domain = DomainTools.normalizeHost(rawDomain)
         require(DomainTools.isValidDomain(domain)) { "أدخل نطاقاً صالحاً مثل example.com" }
@@ -121,6 +122,12 @@ class ReconEngine {
                 }
             }.awaitAll().flatten()
         }
+
+        val geoResults = if (includeArchiveAndMetadata) {
+            runCatching { queryIpGeolocation(dnsResults) }
+                .onFailure { warnings += "تحديد موقع IP: ${it.message ?: "تعذر جلب بيانات الموقع التقريبي"}" }
+                .getOrDefault(emptyList())
+        } else emptyList()
 
         val extraResults = if (includeArchiveAndMetadata) {
             coroutineScope {
@@ -150,7 +157,13 @@ class ReconEngine {
                 .getOrDefault(emptyList())
         } else emptyList()
 
-        val records = (dnsResults + extraResults + certificateResults)
+        val activeResults = if (includeActiveChecks) {
+            runCatching { runLimitedActiveChecks(domain) }
+                .onFailure { warnings += "الفحوص النشطة المحدودة: ${it.message ?: "تعذر إكمال فحص الاتصال"}" }
+                .getOrDefault(emptyList())
+        } else emptyList()
+
+        val records = (dnsResults + geoResults + extraResults + certificateResults + activeResults)
             .distinctBy { "${it.kind}|${it.value.lowercase(Locale.ROOT)}" }
 
         return ScanReport(
@@ -291,29 +304,67 @@ class ReconEngine {
     }
 
     private suspend fun queryWayback(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
-        // Reverse time order and collapse by URL so the first results represent newer captures
-        // across different pages instead of returning only the oldest captures.
-        val endpoint = "https://web.archive.org/cdx/search/cdx?url=${enc(domain)}&matchType=domain&output=json&fl=timestamp,original,statuscode,mimetype&filter=statuscode:200&filter=mimetype:text/html&collapse=urlkey&sort=reverse&limit=18"
-        val json = JSONArray(getText(endpoint, timeoutMs = 12_000))
+        val endpoints = listOf(
+            "https://web.archive.org/cdx/search/cdx?url=${enc(domain)}&matchType=domain&output=json&fl=timestamp,original,statuscode,mimetype&filter=statuscode:200&filter=mimetype:text/html&collapse=urlkey&limit=40",
+            "https://web.archive.org/cdx/search/cdx?url=${enc("https://$domain/")}&output=json&fl=timestamp,original,statuscode,mimetype&filter=statuscode:200&collapse=urlkey&limit=20"
+        )
         val captures = mutableListOf<ArchiveCapture>()
-        for (i in 0 until json.length()) {
-            val row = json.optJSONArray(i) ?: continue
-            if (row.length() < 3 || row.optString(0).equals("timestamp", true)) continue
-            val timestamp = row.optString(0)
-            val original = row.optString(1)
-            val statusCode = row.optString(2)
-            if (timestamp.length >= 8 && original.startsWith("http")) {
-                captures += ArchiveCapture(timestamp, original, statusCode)
+        var lastError: Exception? = null
+        for (endpoint in endpoints) {
+            try {
+                val json = JSONArray(getText(endpoint, timeoutMs = 12_000))
+                for (i in 0 until json.length()) {
+                    val row = json.optJSONArray(i) ?: continue
+                    if (row.length() < 3 || row.optString(0).equals("timestamp", true)) continue
+                    val timestamp = row.optString(0)
+                    val original = row.optString(1)
+                    val statusCode = row.optString(2)
+                    if (timestamp.length >= 8 && original.startsWith("http")) {
+                        captures += ArchiveCapture(timestamp, original, statusCode)
+                    }
+                }
+                // Even a valid empty response means this query was understood; try the second
+                // query for better coverage, but don't treat empty JSON as a service failure.
+                if (captures.isNotEmpty()) break
+            } catch (error: Exception) {
+                lastError = error
             }
         }
 
-        // Only fetch previews for the newest few pages to keep the phone's data/battery use bounded.
-        val previews = coroutineScope {
-            captures.take(4).map { capture ->
-                async { capture.original to runCatching { extractPreviewImage(capture.timestamp, capture.original) }.getOrNull() }
-            }.awaitAll().toMap()
+        // The CDX index can temporarily return HTTP 503. Internet Archive's Availability API
+        // provides a smaller alternative when the index is overloaded.
+        if (captures.isEmpty()) {
+            val fallbackEndpoint = "https://archive.org/wayback/available?url=${enc("https://$domain/")}"
+            try {
+                val root = JSONObject(getText(fallbackEndpoint, timeoutMs = 10_000))
+                val closest = root.optJSONObject("archived_snapshots")?.optJSONObject("closest")
+                if (closest != null && closest.optBoolean("available", false)) {
+                    val timestamp = closest.optString("timestamp")
+                    val original = closest.optString("url").takeIf { it.startsWith("http") } ?: "https://$domain/"
+                    if (timestamp.length >= 8) captures += ArchiveCapture(timestamp, original, closest.optString("status", "200"))
+                }
+            } catch (error: Exception) {
+                if (lastError == null) lastError = error
+            }
         }
-        captures.map { capture ->
+
+        if (captures.isEmpty() && lastError != null) {
+            throw IllegalStateException(
+                "Wayback لم يستجب بعد محاولات بديلة؛ قد يكون HTTP 503 مؤقتاً. أعد المحاولة لاحقاً. السبب: " +
+                    (lastError?.message ?: "مصدر الأرشيف غير متاح"),
+                lastError
+            )
+        }
+
+        val ordered = captures.distinctBy { "${it.timestamp}|${it.original}" }
+            .sortedByDescending { it.timestamp }
+            .take(18)
+
+        val previewCapture = ordered.firstOrNull()
+        val previewImage = previewCapture?.let {
+            runCatching { extractPreviewImage(it.timestamp, it.original) }.getOrNull()
+        }
+        ordered.map { capture ->
             val date = capture.timestamp.take(4) + "-" + capture.timestamp.substring(4, 6) + "-" + capture.timestamp.substring(6, 8)
             val snapshotUrl = "https://web.archive.org/web/${capture.timestamp}/${capture.original}"
             ReconRecord(
@@ -322,8 +373,8 @@ class ReconEngine {
                 source = "Internet Archive Wayback Machine",
                 sourceUrl = snapshotUrl,
                 confidence = 90,
-                detail = "لقطة HTML مؤرشفة. قد لا تعمل كل الموارد المضمّنة، ولا تثبت اللقطة أن الصفحة نشطة الآن. حالة الأرشيف: ${capture.statusCode}. فهرس اللقطات: $endpoint",
-                previewImageUrl = previews[capture.original]
+                detail = "لقطة HTML مؤرشفة. قد لا تعمل كل الموارد المضمّنة، ولا تثبت اللقطة أن الصفحة نشطة الآن. حالة الأرشيف: ${capture.statusCode}. فهرس اللقطات: ${endpoints.first()}",
+                previewImageUrl = if (capture == previewCapture) previewImage else null
             )
         }
     }
@@ -375,6 +426,160 @@ class ReconEngine {
         val original: String,
         val statusCode: String
     )
+
+    private suspend fun queryIpGeolocation(dnsRecords: List<ReconRecord>): List<ReconRecord> = withContext(Dispatchers.IO) {
+        val ips = dnsRecords.asSequence()
+            .filter { it.kind == "DNS_A" || it.kind == "DNS_AAAA" }
+            .map { it.value.trim().trimEnd('.') }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(2)
+            .toList()
+        buildList {
+            for (ip in ips) {
+                val endpoint = "https://ipwho.is/${enc(ip)}"
+                val root = runCatching { JSONObject(getText(endpoint, timeoutMs = 7_000)) }.getOrNull() ?: continue
+                if (!root.optBoolean("success", true)) continue
+                val country = root.optString("country").takeIf(String::isNotBlank) ?: continue
+                val region = root.optString("region").takeIf(String::isNotBlank)
+                val city = root.optString("city").takeIf(String::isNotBlank)
+                val location = listOfNotNull(city, region, country).distinct().joinToString(", ")
+                val isp = root.optJSONObject("connection")?.optString("isp")
+                    ?.takeIf { it.isNotBlank() && it != "null" }
+                add(
+                    ReconRecord(
+                        kind = "IP_GEOLOCATION",
+                        value = "$ip · $location" + (isp?.let { " · $it" } ?: ""),
+                        source = "ipwho.is public IP geolocation",
+                        sourceUrl = endpoint,
+                        confidence = 42,
+                        detail = "موقع تقريبي لعنوان IP وليس عنواناً مادياً مؤكداً للخادم. قد يشير إلى مركز بيانات أو CDN أو استضافة مشتركة أو وكيل؛ لا يحدد مكان شخص."
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Optional low-impact checks for targets the user owns or is authorized to test.
+     * This does not try default credentials, authenticate, inject payloads, bypass controls,
+     * exploit services, or retain sensitive response bodies.
+     */
+    private suspend fun runLimitedActiveChecks(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
+        val addresses = java.net.InetAddress.getAllByName(domain).distinctBy { it.hostAddress }.take(2)
+        if (addresses.isEmpty()) return@withContext emptyList()
+        val ports = listOf(
+            21 to "FTP", 22 to "SSH", 25 to "SMTP", 53 to "DNS", 80 to "HTTP",
+            110 to "POP3", 143 to "IMAP", 443 to "HTTPS", 445 to "SMB", 587 to "SMTP submission",
+            993 to "IMAPS", 995 to "POP3S", 1433 to "MS SQL", 2375 to "Docker API",
+            3306 to "MySQL", 3389 to "RDP", 5432 to "PostgreSQL", 5900 to "VNC",
+            6379 to "Redis", 8080 to "HTTP alternate", 8443 to "HTTPS alternate",
+            9200 to "Elasticsearch", 27017 to "MongoDB"
+        )
+        val openPorts = coroutineScope {
+            addresses.flatMap { address ->
+                ports.map { (port, service) ->
+                    async(Dispatchers.IO) {
+                        val isOpen = runCatching {
+                            java.net.Socket().use { socket ->
+                                socket.connect(java.net.InetSocketAddress(address, port), 650)
+                                true
+                            }
+                        }.getOrDefault(false)
+                        if (isOpen) ReconRecord(
+                            kind = "OPEN_TCP_PORT",
+                            value = "${address.hostAddress}:$port ($service)",
+                            source = "Limited TCP connect check",
+                            sourceUrl = "https://$domain/",
+                            confidence = 72,
+                            detail = "نجح اتصال TCP فقط؛ هذا لا يثبت وجود ثغرة أو سوء إعداد. قد يكون العنوان بنية استضافة مشتركة."
+                        ) else null
+                    }
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        val exposureResults = coroutineScope {
+            listOf(
+                "/.env" to Regex("(?im)^(APP_|DB_|DATABASE_URL=|AWS_|SECRET_KEY=)"),
+                "/.git/HEAD" to Regex("(?i)^ref:\\s*refs/"),
+                "/.DS_Store" to Regex("(?s)^Bud1"),
+                "/server-status" to Regex("(?i)Apache Server Status"),
+                "/actuator/env" to Regex("(?i)propertySources|activeProfiles"),
+                "/phpinfo.php" to Regex("(?i)PHP Version"),
+                "/config.php.bak" to Regex("(?i)<\\?php|DB_HOST|DB_NAME")
+            ).map { (path, signature) ->
+                async(Dispatchers.IO) {
+                    runCatching { probeExposurePath(domain, path, signature) }.getOrNull()
+                }
+            }.awaitAll().filterNotNull()
+        }
+
+        val portSummary = ReconRecord(
+            kind = "PORT_SCAN_SUMMARY",
+            value = "تم اختبار ${ports.size} منفذاً شائعاً على ${addresses.size} عنوان IP كحد أقصى",
+            source = "Limited TCP connect check",
+            sourceUrl = "https://$domain/",
+            confidence = if (openPorts.isEmpty()) 40 else 65,
+            detail = if (openPorts.isEmpty()) {
+                "لم يُؤكد أي منفذ مفتوح من القائمة المحدودة. قد تكون المنافذ مغلقة أو مفلترة أو أن المهلة قصيرة؛ هذه ليست نتيجة مسح شامل."
+            } else {
+                "تم تأكيد ${openPorts.size} اتصال TCP مفتوحاً من قائمة محدودة. راجع الخدمة يدوياً وبموافقة مالك الأصل."
+            }
+        )
+        val exposureSummary = if (exposureResults.isEmpty()) listOf(
+            ReconRecord(
+                kind = "EXPOSURE_CHECK_SUMMARY",
+                value = "لم تُكتشف بصمات مطابقة للمسارات الحساسة المختبرة",
+                source = "Bounded public exposure checks",
+                sourceUrl = "https://$domain/",
+                confidence = 45,
+                detail = "اختُبرت مجموعة صغيرة من المؤشرات الشائعة فقط؛ لا يثبت هذا عدم وجود ملفات أخرى أو أبواب خلفية."
+            )
+        ) else exposureResults
+        listOf(portSummary) + openPorts + exposureSummary
+    }
+
+    private fun probeExposurePath(domain: String, path: String, signature: Regex): ReconRecord? {
+        val endpoint = "https://$domain$path"
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 2_500
+            readTimeout = 2_500
+            instanceFollowRedirects = false
+            useCaches = false
+            setRequestProperty("Range", "bytes=0-4095")
+            setRequestProperty("Accept", "text/plain,text/html,application/json,*/*")
+            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (authorized low-impact exposure check)")
+        }
+        try {
+            val status = connection.responseCode
+            if (status !in 200..299) return null
+            val body = connection.inputStream.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(1_024)
+                var total = 0
+                while (total < 4_096) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 4_096 - total))
+                    if (count <= 0) break
+                    out.write(buffer, 0, count)
+                    total += count
+                }
+                out.toString(StandardCharsets.UTF_8.name())
+            }
+            if (!signature.containsMatchIn(body)) return null
+            return ReconRecord(
+                kind = "POTENTIAL_SENSITIVE_EXPOSURE",
+                value = "$path returned HTTP $status with a matching content signature",
+                source = "Bounded public exposure checks",
+                sourceUrl = endpoint,
+                confidence = 78,
+                detail = "تم رصد توقيع محتوى قد يشير إلى ملف/واجهة حساسة مكشوفة. لم يُحفظ محتوى الاستجابة؛ تحقق يدوياً قبل تصنيفها كثغرة."
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
 
     private suspend fun inspectHttps(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
         val endpoint = "https://$domain/"
@@ -503,6 +708,23 @@ class ReconEngine {
     }
 
     private fun getText(endpoint: String, timeoutMs: Int, accept: String = "application/json"): String {
+        var lastError: Exception? = null
+        repeat(3) { attempt ->
+            try {
+                return getTextOnce(endpoint, timeoutMs, accept)
+            } catch (error: Exception) {
+                lastError = error
+                val message = error.message.orEmpty()
+                val retryable = listOf("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "timed out", "timeout")
+                    .any { message.contains(it, ignoreCase = true) }
+                if (!retryable || attempt == 2) throw error
+                Thread.sleep(if (attempt == 0) 400L else 900L)
+            }
+        }
+        throw lastError ?: IllegalStateException("Request failed")
+    }
+
+    private fun getTextOnce(endpoint: String, timeoutMs: Int, accept: String): String {
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = timeoutMs
@@ -510,17 +732,26 @@ class ReconEngine {
             instanceFollowRedirects = true
             useCaches = false
             setRequestProperty("Accept", accept)
-            setRequestProperty("User-Agent", "OSINT-Workbench/0.2 (passive research tool)")
+            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (public-source research; see project README)")
         }
-
         try {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.use { input ->
-                BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8)).use { it.readText() }
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                var total = 0
+                while (total < 512_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 512_000 - total))
+                    if (count <= 0) break
+                    out.write(buffer, 0, count)
+                    total += count
+                }
+                out.toString(StandardCharsets.UTF_8.name())
             }.orEmpty()
             if (status !in 200..299) {
-                throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
+                val preview = body.replace(Regex("\\s+"), " ").take(160)
+                throw IllegalStateException("HTTP $status from ${URL(endpoint).host}" + if (preview.isBlank()) "" else " · $preview")
             }
             if (body.isBlank()) throw IllegalStateException("Empty response from ${URL(endpoint).host}")
             return body

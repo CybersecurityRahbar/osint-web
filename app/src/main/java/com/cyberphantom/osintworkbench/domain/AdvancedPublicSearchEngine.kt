@@ -17,6 +17,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.Base64
 
 data class PublicWebSearchResponse(
     val query: String,
@@ -574,6 +575,7 @@ class AdvancedPublicSearchEngine {
         val isDuckDuckGo = host == "duckduckgo.com" || host.endsWith(".duckduckgo.com")
         val isGoogleRedirect = host.startsWith("google.") || host.contains(".google.") && uri.path == "/url"
         val isYahooRedirect = host == "r.search.yahoo.com" || host == "search.yahoo.com"
+        val isBingRedirect = host == "bing.com" || host.endsWith(".bing.com")
         val queryDestination = when {
             isDuckDuckGo -> queryParams["uddg"]
             isGoogleRedirect -> queryParams["url"] ?: queryParams["q"]
@@ -583,8 +585,20 @@ class AdvancedPublicSearchEngine {
         val yahooPathDestination = if (isYahooRedirect) {
             Regex("""(?:^|/)RU=([^/]+)""").find(uri.rawPath.orEmpty())?.groupValues?.getOrNull(1)
         } else null
+        val bingDestination = if (isBingRedirect) {
+            queryParams["u"]?.let { raw ->
+                val decodedParameter = URLDecoder.decode(raw, StandardCharsets.UTF_8.name())
+                val payload = decodedParameter.removePrefix("a1")
+                val base64Decoded = runCatching {
+                    String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8)
+                }.getOrNull()
+                base64Decoded?.takeIf { it.startsWith("https://") }
+                    ?: decodedParameter.takeIf { it.startsWith("https://") }
+            }
+        } else null
         val encodedDestination = queryDestination ?: yahooPathDestination
-        val destination = encodedDestination?.let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+        val destination = bingDestination
+            ?: encodedDestination?.let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
         if (!destination.isNullOrBlank() && destination.startsWith("https://")) destination else absolute
     }.getOrNull()?.takeIf {
         val host = runCatching { URL(it).host.lowercase(Locale.ROOT) }.getOrDefault("")

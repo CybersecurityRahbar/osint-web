@@ -237,7 +237,6 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                             )
                                         }
                                         onSaved()
-                                        if (result.warning != null) error = result.warning
                                     } else {
                                         links = engine.buildSearchLinks(query, kind)
                                         val webResponse = withContext(Dispatchers.IO) {
@@ -305,7 +304,6 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                             )
                                         }
                                         onSaved()
-                                        if (warningList.isNotEmpty()) error = warningList.first()
                                     }
                                 } catch (exception: Exception) {
                                     error = exception.message ?: "تعذر إكمال البحث. قد يكون المصدر محجوباً أو يحدّ الطلبات."

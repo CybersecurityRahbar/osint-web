@@ -12,8 +12,8 @@ android {
         manifestPlaceholders["appLabel"] = "OSINT Workbench"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -64,4 +64,6 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     testImplementation("junit:junit:4.13.2")
+    // Use the real JSON implementation in local JVM tests instead of Android's stubbed org.json classes.
+    testImplementation("org.json:json:20250517")
 }

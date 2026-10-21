@@ -29,7 +29,9 @@ data class PublicProfileResult(
     val description: String,
     val url: String,
     val confidence: Int,
-    val relevanceScore: Int = 0
+    val relevanceScore: Int = 0,
+    /** Optional image thumbnail returned by a public image index; never an identity assertion. */
+    val imageUrl: String? = null
 )
 
 data class NewsArticle(
@@ -108,9 +110,9 @@ class PublicResearchEngine {
                 val digits = quoted.filter(Char::isDigit)
                 providers += PublicSearchLink("بحث الرقم بصيغته", "النتائج العامة فقط؛ لا يكشف مالك الرقم يقيناً", "https://www.google.com/search?q=${enc("\"$quoted\"")}")
                 providers += PublicSearchLink("بحث بصيغة الأرقام", "قد يجد نسخاً منشورة بدون فواصل", "https://www.bing.com/search?q=${enc("\"$digits\"")}")
-                providers += PublicSearchLink("Tellows", "بحث في الصفحات العامة المفهرسة لبلاغات الأرقام", "https://duckduckgo.com/?q=${enc("site:tellows.com \"$digits\"")}")
-                providers += PublicSearchLink("Should I Answer", "بحث في الصفحات العامة المفهرسة لتقارير المكالمات", "https://duckduckgo.com/?q=${enc("site:shouldianswer.com \"$digits\"")}")
-                providers += PublicSearchLink("Sync.ME", "بحث مفهرس فقط؛ لا يمثل دليلاً على مالك الرقم", "https://duckduckgo.com/?q=${enc("site:sync.me \"$digits\"")}")
+                providers += PublicSearchLink("Yahoo Search", "بحث ويب عام بديل بصيغة الرقم", "https://search.yahoo.com/search?p=${enc("\"$quoted\"")}")
+                providers += PublicSearchLink("Brave Search", "بحث ويب عام بديل", "https://search.brave.com/search?q=${enc("\"$quoted\"")}")
+                providers += PublicSearchLink("Social platforms", "نتائج عامة مفهرسة من منصات ومجتمعات عامة", "https://www.google.com/search?q=${enc("\"$digits\" (site:reddit.com OR site:github.com OR site:facebook.com OR site:instagram.com OR site:tiktok.com OR site:x.com)")}")
                 providers += PublicSearchLink("Reddit", "بحث عام في تجارب/مشاركات مفهرسة", "https://www.reddit.com/search/?q=${enc("\"$digits\"")}")
             }
             IdentifierKind.EMAIL -> {

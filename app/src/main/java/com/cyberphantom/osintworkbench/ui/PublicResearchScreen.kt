@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -84,6 +85,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     var searchReport by remember { mutableStateOf<ScanReport?>(null) }
     var phoneMetadata by remember { mutableStateOf<String?>(null) }
     var sourceWarnings by remember { mutableStateOf(emptyList<String>()) }
+    var includeImages by rememberSaveable { mutableStateOf(true) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
@@ -111,6 +113,21 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                 label = "الأخبار",
                 onClick = { mode = ResearchMode.NEWS; error = null; profiles = emptyList(); links = emptyList(); phoneMetadata = null; sourceWarnings = emptyList() }
             )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Checkbox(checked = includeImages, onCheckedChange = { includeImages = it })
+            Column(Modifier.weight(1f)) {
+                Text("إظهار الصور في النتائج", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "تشغيل/إيقاف الصور المصغرة في بحث الويب والأخبار؛ صور Commons متاحة عند تفعيلها.",
+                    fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
+                )
+            }
         }
 
         Surface(
@@ -146,7 +163,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         when (kind) {
                             IdentifierKind.NAME -> "سيبحث التطبيق في قواعد بيانات عامة محددة، ويجهز روابط بحث إضافية في محركات الويب."
                             IdentifierKind.USERNAME -> "تظهر نتائج GitHub العامة داخل التطبيق، مع روابط بحث مفهرس لمنصات أخرى. الروابط لا تثبت وحدها ملكية الحساب."
-                            IdentifierKind.PHONE -> "عند الضغط على البحث، يجمع التطبيق النتائج العامة المفهرسة تلقائياً من DuckDuckGo، بما فيها صفحات Reddit وأدلة الإبلاغ العامة إن ظهرت. لا يكشف مالك الرقم أو نشاطه يقيناً."
+                            IdentifierKind.PHONE -> "عند الضغط على البحث، يحاول التطبيق جلب نتائج عامة مفهرسة من DuckDuckGo وBing وGoogle وYahoo، مع توسيع الاستعلامات. وقد تُحجب بعض المحركات أو تغيّر HTML؛ لا يكشف هذا مالك الرقم أو نشاطه يقيناً."
                             IdentifierKind.EMAIL -> "البحث المباشر يجلب الصفحات العامة المفهرسة تلقائياً. تتم مشاركة عبارة البحث مع مزود البحث العام؛ لا نبحث في قواعد كلمات المرور أو التسريبات الخاصة."
                         },
                         color = WorkbenchColors.TextSecondary,
@@ -165,7 +182,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         colors = researchFieldColors()
                     )
                     Text(
-                        "المصدر الحالي هو GDELT DOC API. تغطيته ولغاته وتوفره تختلف، لذلك لن تعني النتائج الصفرية عدم وجود أخبار.",
+                        "يجمع البحث بين GDELT DOC API وGoogle News RSS وبحث مقيّد بناشرين عالميين وعرب. يُعرض اسم الناشر لكل خبر، وقد تختلف تغطية المصادر أو تمنع بعض الطلبات.",
                         color = WorkbenchColors.TextSecondary,
                         fontSize = 11.sp,
                         lineHeight = 18.sp
@@ -191,7 +208,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                 val startedAt = System.currentTimeMillis()
                                 try {
                                     if (mode == ResearchMode.NEWS) {
-                                        val result = MultiSourceNewsEngine().search(query)
+                                        val result = MultiSourceNewsEngine().search(query, includeImages = includeImages)
                                         news = result
                                         val records = result.articles.map { article ->
                                             ReconRecord(
@@ -240,7 +257,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                     } else {
                                         links = engine.buildSearchLinks(query, kind)
                                         val webResponse = withContext(Dispatchers.IO) {
-                                            automatedSearch.search(query, kind, maxResults = 30)
+                                            automatedSearch.search(query, kind, maxResults = 30, includeImages = includeImages)
                                         }
                                         phoneMetadata = if (kind == IdentifierKind.PHONE) automatedSearch.phoneMetadata(query) else null
                                         sourceWarnings = webResponse.warnings
@@ -354,9 +371,9 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                 sourceWarnings.forEach { warning -> Text(warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 17.sp) }
             }
             if (profiles.isNotEmpty()) {
-                ResearchSectionHeader("نتائج مباشرة من الويب", "${profiles.size} نتيجة مفهرسة من DuckDuckGo وواجهات عامة")
+                ResearchSectionHeader("نتائج مباشرة من الويب", "${profiles.size} نتيجة مفهرسة من محركات ويب متعددة")
                 profiles.forEach { profile ->
-                    PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
+                    PublicProfileCard(profile = profile, showImage = includeImages, onOpen = { uriHandler.openUri(profile.url) })
                 }
             }
             if (links.isNotEmpty()) {
@@ -407,7 +424,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                     Text(result.warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 18.sp)
                 }
                 result.articles.forEach { article ->
-                    NewsArticleCard(article = article, onOpen = { uriHandler.openUri(article.url) })
+                    NewsArticleCard(article = article, showImage = includeImages, onOpen = { uriHandler.openUri(article.url) })
                 }
             }
         }
@@ -434,7 +451,7 @@ private fun ModeButton(modifier: Modifier, selected: Boolean, label: String, onC
 }
 
 @Composable
-private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) {
+private fun PublicProfileCard(profile: PublicProfileResult, showImage: Boolean = true, onOpen: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = WorkbenchColors.Surface,
@@ -442,8 +459,17 @@ private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) 
         border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
     ) {
         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(Modifier.size(36.dp).clip(CircleShape).background(WorkbenchColors.Violet.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
-                androidx.compose.material3.Icon(Icons.Filled.PersonSearch, contentDescription = null, tint = WorkbenchColors.Violet, modifier = Modifier.size(19.dp))
+            if (showImage && !profile.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = profile.imageUrl,
+                    contentDescription = "صورة من ${profile.provider}",
+                    modifier = Modifier.size(68.dp).clip(RoundedCornerShape(10.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            } else {
+                Box(Modifier.size(36.dp).clip(CircleShape).background(WorkbenchColors.Violet.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Icon(Icons.Filled.PersonSearch, contentDescription = null, tint = WorkbenchColors.Violet, modifier = Modifier.size(19.dp))
+                }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(profile.title, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -463,7 +489,7 @@ private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) 
 }
 
 @Composable
-private fun NewsArticleCard(article: NewsArticle, onOpen: () -> Unit) {
+private fun NewsArticleCard(article: NewsArticle, showImage: Boolean = true, onOpen: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = WorkbenchColors.Surface,
@@ -478,7 +504,7 @@ private fun NewsArticleCard(article: NewsArticle, onOpen: () -> Unit) {
                 Text(article.publishedAt.ifBlank { "وقت النشر غير متاح" }, fontSize = 9.sp, color = WorkbenchColors.TextSecondary)
             }
             Text(article.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, lineHeight = 19.sp)
-            if (!article.imageUrl.isNullOrBlank()) {
+            if (showImage && !article.imageUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = article.imageUrl,
                     contentDescription = "صورة خبر من ${article.publisherName}",

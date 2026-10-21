@@ -19,7 +19,8 @@
 
 - Search modes for names, usernames, phone numbers, and email addresses.
 - Expands queries into multiple public-index searches (including Reddit-indexed pages and public caller-report directories for numbers).
-- Fetches indexed public results from DuckDuckGo HTML with a Lite fallback, rather than showing only pre-made links.
+- Fetches indexed public results from DuckDuckGo HTML with a Lite fallback and uses the public Instant Answer endpoint as a small supplementary fallback, rather than showing only pre-made links.
+- Ranks matches deterministically: exact phone digits, exact email/username hits and title/token overlap rise above vague results. The relevance score is explicitly heuristic, not a probability.
 - Combines available API results from GitHub public users search and Wikidata for suitable queries.
 - Normalizes international-format phone numbers offline with Google's libphonenumber metadata and displays numbering-plan information only. It does **not** reveal a subscriber, confirm that a number is active, or identify its owner.
 - Provider links remain available as fallbacks. Some result pages may be blocked, rate-limited, or changed; failure warnings remain visible.
@@ -36,6 +37,7 @@
 
 - SQLite persists entities, evidence, scan payloads, relationships, and case workspaces locally.
 - Relationship types distinguish DNS resolution, nameservers, mail exchanges, subdomains, archive captures, redirects, images, registration metadata, and observed web properties.
+- SQLite schema v3 preserves the same relation when it is supported by multiple recorded sources instead of overwriting the prior source. The graph groups matching edges and displays the stored sources and observations.
 - Repeated generic values (for example, an HTTP status or a page title) are scoped to the observed target to reduce accidental global “hub” relationships.
 - An explainable, offline rule engine highlights shared-IP observations, stale/weak evidence, missing data, and suggested next verification steps. It does not invent identity links from name similarity.
 - Confidence values are heuristic source-quality indicators, not calibrated statistical probabilities.

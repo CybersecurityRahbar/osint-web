@@ -2,13 +2,13 @@ package com.cyberphantom.osintworkbench.domain
 
 import com.google.i18n.phonenumbers.PhoneNumberUtil
 import com.google.i18n.phonenumbers.Phonenumber
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
@@ -131,13 +131,21 @@ class AdvancedPublicSearchEngine {
             val searchTasks = searchQueries.flatMapIndexed { index, searchQuery ->
                 endpointsForQuery(searchQuery, primary = index == 0).map { endpoint ->
                     async {
-                        runCatching { sourceSemaphore.withPermit { searchProvider(endpoint, minOf(12, limit)) } }
-                            .fold(
-                                onSuccess = { SearchAttempt(index, searchQuery, endpoint.provider, it, null) },
-                                onFailure = {
-                                    SearchAttempt(index, searchQuery, endpoint.provider, emptyList(), it.message ?: "تعذر الوصول")
-                                }
-                            )
+                        sourceSemaphore.acquire()
+                        try {
+                            try {
+                                SearchAttempt(
+                                    index, searchQuery, endpoint.provider,
+                                    searchProvider(endpoint, minOf(12, limit)), null
+                                )
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Exception) {
+                                SearchAttempt(index, searchQuery, endpoint.provider, emptyList(), error.message ?: "تعذر الوصول")
+                            }
+                        } finally {
+                            sourceSemaphore.release()
+                        }
                     }
                 }
             }

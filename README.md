@@ -58,7 +58,7 @@
 - Live collection needs network access. Carrier, country, DNS, source, and rate-limit restrictions may still cause empty results.
 - Automatic identifier lookup is based on public indexes and permitted public APIs, not on a universal, authoritative phone-owner database. A zero-result response does not prove that information does not exist.
 - The app's SQLite database **is not encrypted at rest yet**; avoid storing highly sensitive data in the prototype.
-- GitHub Actions builds a **debug preview** with application ID `com.cyberphantom.osintworkbench.preview`, so it can be installed side-by-side with the original `com.cyberphantom.osintworkbench` app and will not replace its private database. Debug keys may change between CI runs; export JSON from a preview before upgrading to another preview when possible.
+- GitHub Actions builds a **v0.5 debug preview** with application ID `com.cyberphantom.osintworkbench.preview050`, so it can be installed beside both the original `com.cyberphantom.osintworkbench` app and older `.preview` builds. This version-specific ID avoids Android signature-conflict errors when GitHub-hosted debug keys change between CI runs. The downloaded GitHub Actions artifact is a ZIP containing `app-debug.apk`; install that APK, not the ZIP itself. The original application/database is not replaced.
 - CI verifies compilation/tests and APK packaging; it does not validate each source's live response on every carrier or phone.
 
 ## Search-engine reference

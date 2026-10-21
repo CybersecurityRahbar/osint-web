@@ -27,6 +27,23 @@ class BroadPublicSearchAdapterTest {
     }
 
     @Test
+    fun unwrapsBingClickTrackingUrlToTheExternalSource() {
+        val html = """
+            <ol>
+              <li class="b_algo">
+                <h2><a href="https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLm9yZy9wYWdl&amp;ntb=1">External result</a></h2>
+                <div class="b_caption"><p>A public indexed result.</p></div>
+              </li>
+            </ol>
+        """.trimIndent()
+
+        val results = adapter.parseHtml(html, "Bing", 10)
+
+        assertEquals(1, results.size)
+        assertEquals("https://example.org/page", results.single().url)
+    }
+
+    @Test
     fun parsesDuckDuckGoResultAnchors() {
         val html = """
             <div class="result">

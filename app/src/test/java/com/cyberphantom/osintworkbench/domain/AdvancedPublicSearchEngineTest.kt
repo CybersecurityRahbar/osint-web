@@ -33,6 +33,39 @@ class AdvancedPublicSearchEngineTest {
     }
 
     @Test
+    fun exactPhoneDigitsRankAboveVagueResults() {
+        val exact = PublicProfileResult(
+            provider = "DuckDuckGo · Tellows",
+            title = "Reports for +967 71 234 5678",
+            description = "Public caller reports mention this exact number.",
+            url = "https://www.tellows.com/num/967712345678",
+            confidence = 72
+        )
+        val vague = PublicProfileResult(
+            provider = "DuckDuckGo",
+            title = "How to identify unwanted calls",
+            description = "General information about unknown phone calls.",
+            url = "https://example.org/phone-safety",
+            confidence = 72
+        )
+
+        val exactScore = engine.calculateRelevance("+967 71 234 5678", IdentifierKind.PHONE, exact)
+        val vagueScore = engine.calculateRelevance("+967 71 234 5678", IdentifierKind.PHONE, vague)
+        assertTrue(exactScore > vagueScore)
+    }
+
+    @Test
+    fun exactNamePhraseRanksAboveBroadTokenOverlap() {
+        val exact = PublicProfileResult("DuckDuckGo", "Ada Lovelace - Biography", "", "https://example.org/ada-lovelace", 70)
+        val partial = PublicProfileResult("DuckDuckGo", "Ada and Early Computing", "A separate topic mentions Lovelace in passing.", "https://example.org/ada", 70)
+
+        assertTrue(
+            engine.calculateRelevance("Ada Lovelace", IdentifierKind.NAME, exact) >
+                engine.calculateRelevance("Ada Lovelace", IdentifierKind.NAME, partial)
+        )
+    }
+
+    @Test
     fun internationalPhoneMetadataIsPlanValidationNotIdentity() {
         val metadata = engine.phoneMetadata("+12025550123")
         assertNotNull(metadata)

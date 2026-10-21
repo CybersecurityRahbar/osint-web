@@ -24,7 +24,7 @@
 
 - Search modes for names, usernames, phone numbers, and email addresses.
 - Expands queries into multiple public-index searches (including Reddit-indexed pages and public caller-report directories for numbers).
-- Attempts live public-index retrieval across DuckDuckGo HTML/Lite, Bing, Brave, Mojeek, Qwant JSON, SearXNG JSON, Startpage, Ecosia and Yandex using provider-specific parsers and redirect normalization. One provider's block or changed markup is isolated from the rest.
+- Attempts live public-index retrieval across DuckDuckGo HTML/Lite, Bing, Google, Brave, Mojeek, Qwant JSON, SearXNG JSON, Startpage, Ecosia and Yandex using provider-specific parsers and redirect normalization. One provider's block or changed markup is isolated from the rest.
 - Tries image indexes independently: Bing Images metadata (`murl`/`turl`/`purl`), SearXNG image results, and Wikimedia Commons. The visible thumbnail links to the indexed source page; a thumbnail is not proof of identity or context.
 - Keeps source-level warnings and bounded concurrency/timeouts. Public engines and SearXNG instances may disable HTML/JSON access, so the app reports the failed provider rather than implying that a zero-result search proves the information is absent.
 - Image results are controlled by a single in-app toggle. When enabled, identifier search also calls Bing Images and SearXNG image search, alongside Wikimedia Commons; news feeds and page metadata may supply additional images. This remains a multi-source best-effort index, not a universal image index.

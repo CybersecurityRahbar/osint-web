@@ -707,7 +707,8 @@ class ReconEngine {
     }
 
     private fun fetchPublicDiscoveryFile(domain: String, path: String): List<ReconRecord> {
-        for (scheme in listOf("https", "http")) {
+        // Respect android:usesCleartextTraffic=false; do not try plain HTTP here.
+        for (scheme in listOf("https")) {
             val endpoint = "$scheme://$domain$path"
             val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"

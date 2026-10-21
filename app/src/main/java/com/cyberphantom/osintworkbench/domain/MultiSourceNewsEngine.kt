@@ -173,8 +173,9 @@ class MultiSourceNewsEngine {
                                 sourceUrl = parser.getAttributeValue(null, "url").orEmpty()
                                 sourceName = parser.nextText().trim()
                             }
-                            "thumbnail" -> imageUrl = parser.getAttributeValue(null, "url").orEmpty()
-                            "enclosure" -> if (imageUrl.isBlank()) imageUrl = parser.getAttributeValue(null, "url").orEmpty()
+                            "thumbnail", "media:thumbnail" -> imageUrl = parser.getAttributeValue(null, "url").orEmpty()
+                            "content", "media:content", "enclosure" ->
+                                if (imageUrl.isBlank()) imageUrl = parser.getAttributeValue(null, "url").orEmpty()
                         }
                     }
                 }
@@ -184,11 +185,17 @@ class MultiSourceNewsEngine {
                             .ifBlank { requestedPublisher?.domain.orEmpty() }
                         val fallbackDomain = runCatching { URL(link).host.removePrefix("www.") }.getOrDefault("")
                         val actualDomain = sourceDomain.ifBlank { fallbackDomain }
-                        val actualPublisher = sourceName.ifBlank { requestedPublisher?.name ?: publisherLabel(actualDomain) }
+                        val inferredPublisher = inferPublisherFromTitle(title)
+                        val actualPublisher = sourceName.ifBlank {
+                            requestedPublisher?.name ?: inferredPublisher ?: publisherLabel(actualDomain)
+                        }
+                        val attributedDomain = sourceDomain.ifBlank {
+                            requestedPublisher?.domain ?: knownPublisherDomain(actualPublisher) ?: actualDomain
+                        }
                         articles += NewsArticle(
                             title = stripPublisherSuffix(title, actualPublisher),
                             url = link,
-                            domain = actualDomain,
+                            domain = attributedDomain,
                             publishedAt = publishedAt,
                             language = language,
                             sourceCountry = country,
@@ -207,6 +214,30 @@ class MultiSourceNewsEngine {
 
     private fun stripPublisherSuffix(title: String, publisher: String): String =
         title.removeSuffix(" - $publisher").removeSuffix(" – $publisher").trim().ifBlank { title }
+
+    private fun inferPublisherFromTitle(title: String): String? {
+        val suffix = title.substringAfterLast(" - ", "").substringAfterLast(" – ", "").trim()
+        val known = setOf(
+            "Reuters", "Associated Press", "AP News", "BBC", "BBC News", "Al Jazeera",
+            "الجزيرة", "DW", "France 24", "The Guardian", "CNN", "العربية", "Sky News"
+        )
+        return suffix.takeIf { it in known }?.let { if (it == "AP News") "Associated Press" else it }
+    }
+
+    private fun knownPublisherDomain(name: String): String? = when (name) {
+        "Reuters" -> "reuters.com"
+        "Associated Press", "AP News" -> "apnews.com"
+        "BBC", "BBC News" -> "bbc.com"
+        "Al Jazeera" -> "aljazeera.com"
+        "الجزيرة" -> "aljazeera.net"
+        "DW" -> "dw.com"
+        "France 24" -> "france24.com"
+        "The Guardian" -> "theguardian.com"
+        "CNN" -> "cnn.com"
+        "العربية" -> "alarabiya.net"
+        "Sky News" -> "news.sky.com"
+        else -> null
+    }
 
     private fun publisherLabel(domain: String): String {
         val host = domain.lowercase(Locale.ROOT).removePrefix("www.")

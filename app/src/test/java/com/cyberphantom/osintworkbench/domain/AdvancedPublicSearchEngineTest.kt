@@ -23,7 +23,8 @@ class AdvancedPublicSearchEngineTest {
         assertTrue(queries.any { it.contains("+967 71 234 5678") })
         assertTrue(queries.any { it.contains("967712345678") })
         assertTrue(queries.any { it.contains("reddit.com") })
-        assertTrue(queries.any { it.contains("tellows.com") || it.contains("shouldianswer.com") })
+        assertTrue(queries.any { it.contains("facebook.com") || it.contains("instagram.com") })
+        assertTrue(queries.none { it.contains("tellows.com") || it.contains("shouldianswer.com") || it.contains("sync.me") })
     }
 
     @Test
@@ -36,10 +37,10 @@ class AdvancedPublicSearchEngineTest {
     @Test
     fun exactPhoneDigitsRankAboveVagueResults() {
         val exact = PublicProfileResult(
-            provider = "DuckDuckGo · Tellows",
-            title = "Reports for +967 71 234 5678",
-            description = "Public caller reports mention this exact number.",
-            url = "https://www.tellows.com/num/967712345678",
+            provider = "Bing Search",
+            title = "Public web page mentions +967 71 234 5678",
+            description = "An indexed public page contains this exact number.",
+            url = "https://example.net/public-record",
             confidence = 72
         )
         val vague = PublicProfileResult(

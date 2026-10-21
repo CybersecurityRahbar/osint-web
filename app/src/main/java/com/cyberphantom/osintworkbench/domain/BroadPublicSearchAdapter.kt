@@ -39,10 +39,12 @@ internal class BroadPublicSearchAdapter {
             }
             webTask.await() to imageTask.await()
         }
-        val allWeb = attempts.flatMap { it.results }
-        val merged = (allWeb + images.results).distinctBy {
-            if (!it.imageUrl.isNullOrBlank()) "image:" + canonical(it.imageUrl) else canonical(it.url)
-        }.take(limit)
+        val allWeb = attempts.flatMap { it.results }.distinctBy { canonical(it.url) }
+        val distinctImages = images.results.distinctBy { canonical(it.imageUrl ?: it.url) }
+        // Reserve visible slots for images; otherwise a large web result list can push every image off-screen.
+        val imageLimit = minOf(distinctImages.size, if (includeImages) maxOf(3, limit / 3) else 0)
+        val webLimit = (limit - imageLimit).coerceAtLeast(1)
+        val merged = (allWeb.take(webLimit) + distinctImages.take(imageLimit))
         val warnings = buildList {
             attempts.filter { it.error != null }.take(8).forEach { add(it.name + ": " + it.error) }
             addAll(images.warnings.take(4))
@@ -332,7 +334,7 @@ internal class BroadPublicSearchAdapter {
         .replace(Regex("(?s)<[^>]+>"), " ")
         .replace("&amp;", "&").replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'")
         .replace("&lt;", "<").replace("&gt;", ">").replace("&#x27;", "'").replace("&#x2F;", "/")
-        .replace(Regex("\\\\s+"), " ").trim()
+        .replace(Regex("\\s+"), " ").trim()
 
     private fun canonical(raw: String): String = runCatching {
         URL(raw).run { protocol.lowercase(Locale.ROOT) + "://" + host.lowercase(Locale.ROOT) + path.orEmpty().trimEnd('/') }

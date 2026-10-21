@@ -1,6 +1,5 @@
 package com.cyberphantom.osintworkbench.domain
 
-import android.util.Xml
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -10,7 +9,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import org.json.JSONArray
 import org.json.JSONObject
-import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.StringReader
@@ -19,6 +17,10 @@ import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import javax.xml.XMLConstants
+import javax.xml.parsers.DocumentBuilderFactory
+import org.xml.sax.InputSource
+import org.w3c.dom.Element
 
 /**
  * Multi-source news collector. GDELT and Google News RSS are queried independently, with
@@ -192,80 +194,76 @@ class MultiSourceNewsEngine {
         country: String,
         includeImages: Boolean = true
     ): List<NewsArticle> {
-        val parser = Xml.newPullParser()
-        parser.setInput(StringReader(xml))
-        val articles = mutableListOf<NewsArticle>()
-        var event = parser.eventType
-        var inItem = false
-        var title = ""
-        var link = ""
-        var publishedAt = ""
-        var sourceName = ""
-        var sourceUrl = ""
-        var imageUrl = ""
-
-        fun resetItem() {
-            title = ""
-            link = ""
-            publishedAt = ""
-            sourceName = ""
-            sourceUrl = ""
-            imageUrl = ""
+        require(xml.length <= 2_000_000) { "RSS response exceeds the parser size limit." }
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = false
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+            runCatching { setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+            runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+            runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+            runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
+            runCatching { setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false) }
+            runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "") }
+            runCatching { setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "") }
         }
+        val document = factory.newDocumentBuilder().parse(InputSource(StringReader(xml)))
+        val items = document.getElementsByTagName("item")
+        buildList {
+            for (index in 0 until items.length()) {
+                val item = items.item(index) as? Element ?: continue
+                var title = ""
+                var link = ""
+                var publishedAt = ""
+                var sourceName = ""
+                var sourceUrl = ""
+                var imageUrl = ""
 
-        while (event != XmlPullParser.END_DOCUMENT) {
-            when (event) {
-                XmlPullParser.START_TAG -> {
-                    val tag = parser.name.lowercase(Locale.ROOT)
-                    if (tag == "item") {
-                        inItem = true
-                        resetItem()
-                    } else if (inItem) {
-                        when (tag) {
-                            "title" -> title = parser.nextText().trim()
-                            "link" -> link = parser.nextText().trim()
-                            "pubdate" -> publishedAt = parser.nextText().trim()
-                            "source" -> {
-                                sourceUrl = parser.getAttributeValue(null, "url").orEmpty()
-                                sourceName = parser.nextText().trim()
-                            }
-                            "thumbnail", "media:thumbnail" -> imageUrl = parser.getAttributeValue(null, "url").orEmpty()
-                            "content", "media:content", "enclosure" ->
-                                if (imageUrl.isBlank()) imageUrl = parser.getAttributeValue(null, "url").orEmpty()
+                val children = item.childNodes
+                for (childIndex in 0 until children.length) {
+                    val child = children.item(childIndex) as? Element ?: continue
+                    when (child.tagName.substringAfter(':').lowercase(Locale.ROOT)) {
+                        "title" -> title = child.textContent.orEmpty().trim()
+                        "link" -> link = child.textContent.orEmpty().trim()
+                        "pubdate" -> publishedAt = child.textContent.orEmpty().trim()
+                        "source" -> {
+                            sourceUrl = child.getAttribute("url").orEmpty()
+                            sourceName = child.textContent.orEmpty().trim()
+                        }
+                        "thumbnail", "content", "enclosure" -> {
+                            val candidate = child.getAttribute("url").orEmpty()
+                            if (imageUrl.isBlank()) imageUrl = candidate
                         }
                     }
                 }
-                XmlPullParser.END_TAG -> if (parser.name.equals("item", true) && inItem) {
-                    if (title.isNotBlank() && link.startsWith("https://")) {
-                        val sourceDomain = runCatching { URL(sourceUrl).host.removePrefix("www.") }.getOrDefault("")
-                            .ifBlank { requestedPublisher?.domain.orEmpty() }
-                        val fallbackDomain = runCatching { URL(link).host.removePrefix("www.") }.getOrDefault("")
-                        val actualDomain = sourceDomain.ifBlank { fallbackDomain }
-                        val inferredPublisher = inferPublisherFromTitle(title)
-                        val actualPublisher = sourceName.ifBlank {
-                            requestedPublisher?.name ?: inferredPublisher ?: publisherLabel(actualDomain)
-                        }
-                        val attributedDomain = sourceDomain.ifBlank {
-                            requestedPublisher?.domain ?: knownPublisherDomain(actualPublisher) ?: actualDomain
-                        }
-                        articles += NewsArticle(
-                            title = stripPublisherSuffix(title, actualPublisher),
-                            url = link,
-                            domain = attributedDomain,
-                            publishedAt = publishedAt,
-                            language = language,
-                            sourceCountry = country,
-                            publisherName = actualPublisher,
-                            imageUrl = imageUrl.takeIf { includeImages && it.startsWith("https://") },
-                            provider = if (requestedPublisher == null) "Google News RSS" else "Google News RSS · ${requestedPublisher.name}"
-                        )
-                    }
-                    inItem = false
+                if (title.isBlank() || !link.startsWith("https://")) continue
+
+                val sourceDomain = runCatching { URL(sourceUrl).host.removePrefix("www.") }.getOrDefault("")
+                    .ifBlank { requestedPublisher?.domain.orEmpty() }
+                val fallbackDomain = runCatching { URL(link).host.removePrefix("www.") }.getOrDefault("")
+                val actualDomain = sourceDomain.ifBlank { fallbackDomain }
+                val inferredPublisher = inferPublisherFromTitle(title)
+                val actualPublisher = sourceName.ifBlank {
+                    requestedPublisher?.name ?: inferredPublisher ?: publisherLabel(actualDomain)
                 }
+                val attributedDomain = sourceDomain.ifBlank {
+                    requestedPublisher?.domain ?: knownPublisherDomain(actualPublisher) ?: actualDomain
+                }
+                add(
+                    NewsArticle(
+                        title = stripPublisherSuffix(title, actualPublisher),
+                        url = link,
+                        domain = attributedDomain,
+                        publishedAt = publishedAt,
+                        language = language,
+                        sourceCountry = country,
+                        publisherName = actualPublisher,
+                        imageUrl = imageUrl.takeIf { includeImages && it.startsWith("https://") },
+                        provider = if (requestedPublisher == null) "Google News RSS" else "Google News RSS · ${requestedPublisher.name}"
+                    )
+                )
             }
-            event = parser.next()
-        }
-        return articles.distinctBy { "${it.title.lowercase(Locale.ROOT)}|${it.publisherName.lowercase(Locale.ROOT)}" }
+        }.distinctBy { "${it.title.lowercase(Locale.ROOT)}|${it.publisherName.lowercase(Locale.ROOT)}" }
     }
 
     private fun stripPublisherSuffix(title: String, publisher: String): String =

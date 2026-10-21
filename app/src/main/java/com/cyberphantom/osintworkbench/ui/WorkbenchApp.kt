@@ -849,9 +849,12 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
 
 @Composable
 private fun GraphNetwork(relations: List<RelationRow>) {
-    val groups = relations.take(80).groupBy { relationHubValue(it) }
+    val groupedByHub = relations.take(300).groupBy { relationHubValue(it) }
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        groups.forEach { (hub, links) ->
+        groupedByHub.forEach { (hub, hubEvidence) ->
+            val relationships = hubEvidence.groupBy {
+                listOf(it.relation, relationLeafKind(it), relationLeafValue(it)).joinToString("\u001F")
+            }
             Surface(
                 color = WorkbenchColors.Surface,
                 shape = RoundedCornerShape(20.dp),
@@ -869,35 +872,68 @@ private fun GraphNetwork(relations: List<RelationRow>) {
                             Text("الكيان المرجعي", color = WorkbenchColors.Teal, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             Text(hub, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         }
-                        SummaryPill("${links.size} روابط", WorkbenchColors.Teal)
+                        SummaryPill("${relationships.size} علاقات", WorkbenchColors.Teal)
                     }
                     HorizontalDivider(color = WorkbenchColors.Border)
-                    links.forEachIndexed { index, relation ->
+                    relationships.values.forEachIndexed { index, evidence ->
+                        val relation = evidence.maxByOrNull { it.confidence } ?: return@forEachIndexed
+                        val sources = evidence.map { it.source }.filter(String::isNotBlank).distinct()
                         Surface(
                             color = WorkbenchColors.SurfaceElevated,
                             shape = RoundedCornerShape(13.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (sources.size > 1) WorkbenchColors.Teal.copy(alpha = 0.45f) else WorkbenchColors.Border
+                            )
                         ) {
                             Column(Modifier.fillMaxWidth().padding(11.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                                    Box(Modifier.size(7.dp).clip(CircleShape).background(if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber))
+                                    Box(
+                                        Modifier.size(7.dp).clip(CircleShape).background(
+                                            if (sources.size > 1 || relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber
+                                        )
+                                    )
                                     Text(relationDescription(relation.relation), color = WorkbenchColors.Violet, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.weight(1f))
+                                    if (sources.size > 1) SummaryPill("${sources.size} مصادر", WorkbenchColors.Teal)
                                 }
                                 Text(relationLeafValue(relation), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, lineHeight = 18.sp)
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     androidx.compose.material3.Icon(Icons.Filled.ArrowForward, contentDescription = null, tint = WorkbenchColors.TextSecondary, modifier = Modifier.size(14.dp))
-                                    Text("يرتبط بالكيان المرجعي أعلاه", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                                    Text("ارتباط مبني على الدليل المحفوظ", color = WorkbenchColors.TextSecondary, fontSize = 10.sp)
+                                }
+                                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        "المصادر: ${sources.ifEmpty { listOf("غير محدد") }.joinToString(" · ")}",
+                                        color = WorkbenchColors.TextSecondary,
+                                        fontSize = 9.sp,
+                                        lineHeight = 14.sp
+                                    )
+                                    Text(
+                                        "أدلة محفوظة: ${evidence.size} · آخر رصد: ${formatTime(evidence.maxOf { it.observedAt })}",
+                                        color = WorkbenchColors.TextSecondary,
+                                        fontSize = 9.sp
+                                    )
+                                    if (sources.size > 1) {
+                                        Text(
+                                            "تعدد المصادر ملاحظة مفيدة لكنه لا يضمن استقلال قواعد البيانات أو مصادرها الأصلية.",
+                                            color = WorkbenchColors.Amber,
+                                            fontSize = 9.sp,
+                                            lineHeight = 14.sp
+                                        )
+                                    }
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    horizontalArrangement = Arrangement.End,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text("الدليل: ${relation.source}", color = WorkbenchColors.TextSecondary, fontSize = 9.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                        Text("العلاقة ${index + 1} · مصدر محفوظ", color = WorkbenchColors.TextSecondary, fontSize = 9.sp)
-                                    }
-                                    Text("الثقة ${relation.confidence}%", color = if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "الثقة الإرشادية ${evidence.maxOf { it.confidence }}%",
+                                        color = if (relation.confidence >= 80) WorkbenchColors.Teal else WorkbenchColors.Amber,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
@@ -906,7 +942,7 @@ private fun GraphNetwork(relations: List<RelationRow>) {
             }
         }
         Text(
-            "مهم: درجة الثقة تقدير إرشادي للمصدر وليست احتمالاً إحصائياً. تشابه القيمة أو ورودها في أرشيف لا يثبت أن الأصل يعمل حالياً.",
+            "مهم: لا يُنشأ ارتباط اعتماداً على تشابه الاسم فقط. درجة الثقة إرشادية وليست احتمالاً إحصائياً؛ والتقارب في IP أو الشهادات لا يثبت ملكية مشتركة.",
             color = WorkbenchColors.TextSecondary,
             fontSize = 10.sp,
             lineHeight = 16.sp
@@ -922,6 +958,9 @@ private fun isParentToChildRelation(relation: String): Boolean = relation in set
 
 private fun relationHubValue(relation: RelationRow): String =
     if (isParentToChildRelation(relation.relation)) relation.fromValue else relation.toValue
+
+private fun relationLeafKind(relation: RelationRow): String =
+    if (isParentToChildRelation(relation.relation)) relation.toKind else relation.fromKind
 
 private fun relationLeafValue(relation: RelationRow): String =
     if (isParentToChildRelation(relation.relation)) relation.toValue else relation.fromValue

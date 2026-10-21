@@ -104,6 +104,23 @@ class AdvancedPublicSearchEngineTest {
     }
 
     @Test
+    fun unwrapsBingTrackingRedirectToTheExternalSource() {
+        val html = """
+            <ol id="b_results">
+              <li class="b_algo">
+                <h2><a href="https://www.bing.com/ck/a?u=a1aHR0cHM6Ly9leGFtcGxlLmNvbS9uZXdz&ntb=1">Public report</a></h2>
+              </li>
+            </ol>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Bing test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public report", results.single().title)
+        assertEquals("https://example.com/news", results.single().url)
+    }
+
+    @Test
     fun parsesGoogleStyleH3ResultsAndUnwrapsTheRedirectToTheSource() {
         val html = """
             <div class="MjjYud">

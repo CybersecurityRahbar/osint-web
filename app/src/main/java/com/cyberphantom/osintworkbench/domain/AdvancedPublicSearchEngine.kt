@@ -231,7 +231,13 @@ class AdvancedPublicSearchEngine {
         limit: Int
     ): List<PublicProfileResult> = withContext(Dispatchers.IO) {
         val html = fetchHtml(endpoint.url, timeoutMs = 6_500)
-        parseResults(html, limit, endpoint.provider)
+        val parsed = parseResults(html, limit, endpoint.provider)
+        if (parsed.isEmpty()) {
+            throw IllegalStateException(
+                "HTTP 200، لكن لم يتعرف المحلل على نتائج خارجية من صفحة المزود؛ قد تكون بنية HTML تغيرت أو ظهرت صفحة تحقق أو لا توجد نتائج مفهرسة لهذه العبارة."
+            )
+        }
+        parsed
     }
 
     private fun fetchHtml(endpoint: String, timeoutMs: Int): String {

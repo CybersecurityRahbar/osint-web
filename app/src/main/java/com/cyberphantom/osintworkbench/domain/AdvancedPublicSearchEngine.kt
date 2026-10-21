@@ -105,22 +105,44 @@ class AdvancedPublicSearchEngine {
         }.getOrNull()
     }
 
-    suspend fun search(rawQuery: String, kind: IdentifierKind, maxResults: Int = 24): PublicWebSearchResponse {
+    suspend fun search(
+        rawQuery: String,
+        kind: IdentifierKind,
+        maxResults: Int = 24,
+        includeImages: Boolean = false
+    ): PublicWebSearchResponse {
         val query = rawQuery.trim()
-        val searchQueries = buildSearchQueries(query, kind)
+        val searchQueries = buildSearchQueries(query, kind).take(4)
         val limit = maxResults.coerceIn(5, 40)
 
-        val outcomes = coroutineScope {
-            searchQueries.mapIndexed { index, searchQuery ->
-                async {
-                    runCatching { searchDuckDuckGo(searchQuery, minOf(12, limit)) }
-                        .fold(
-                            onSuccess = { SearchAttempt(index, searchQuery, it, null) },
-                            onFailure = { SearchAttempt(index, searchQuery, emptyList(), it.message ?: "تعذر الوصول إلى DuckDuckGo") }
-                        )
+        // Use multiple public search frontends instead of trusting a single HTML template.
+        // The primary query is sent to three providers; expanded queries use two. This is
+        // intentionally bounded to avoid hammering public services from a mobile device.
+        val batch = coroutineScope {
+            val searchTasks = searchQueries.flatMapIndexed { index, searchQuery ->
+                endpointsForQuery(searchQuery, primary = index == 0).map { endpoint ->
+                    async {
+                        runCatching { searchProvider(endpoint, searchQuery, minOf(12, limit)) }
+                            .fold(
+                                onSuccess = { SearchAttempt(index, searchQuery, endpoint.provider, it, null) },
+                                onFailure = {
+                                    SearchAttempt(index, searchQuery, endpoint.provider, emptyList(), it.message ?: "تعذر الوصول")
+                                }
+                            )
+                    }
                 }
-            }.awaitAll()
+            }
+            val imageTask = async {
+                if (includeImages) {
+                    runCatching { searchWikimediaImages(query, minOf(10, limit)) }
+                        .fold({ it to null }, { emptyList<PublicProfileResult>() to (it.message ?: "تعذر جلب الصور") })
+                } else emptyList<PublicProfileResult>() to null
+            }
+            searchTasks.awaitAll() to imageTask.await()
         }
+        val outcomes = batch.first
+        val imageResults = batch.second.first
+        val imageError = batch.second.second
 
         val indexedResults = outcomes
             .flatMap { attempt ->
@@ -130,27 +152,34 @@ class AdvancedPublicSearchEngine {
             }
             .distinctBy { canonicalUrl(it.url) }
 
-        // The Instant Answer endpoint is a small, independent fallback for definitions and
-        // knowledge-panel style results. It supplements web-index hits; it doesn't replace them.
+        // The Instant Answer endpoint is a small knowledge-panel fallback, not a replacement
+        // for web-index hits.
         val instantResults = if (indexedResults.size < minOf(5, limit)) {
             runCatching { searchInstantAnswer(query, limit) }.getOrDefault(emptyList())
                 .map { result -> result.copy(relevanceScore = calculateRelevance(query, kind, result, 0)) }
         } else emptyList()
 
-        val results = (indexedResults + instantResults)
+        val results = (indexedResults + imageResults + instantResults)
             .distinctBy { canonicalUrl(it.url) }
             .groupBy { sourceHost(it.url) }
             .values
-            .flatMap { group -> group.sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence }).take(5) }
+            .flatMap { group ->
+                group.sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
+                    .take(if (group.any { it.imageUrl != null }) 8 else 5)
+            }
             .sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
             .take(limit)
 
         val warnings = buildList {
-            outcomes.filter { it.error != null }.take(4).forEach { failed ->
-                add("DuckDuckGo: تعذر جلب بحث «${failed.query}»: ${failed.error}")
+            outcomes.filter { it.error != null }.take(5).forEach { failed ->
+                add("\${failed.provider}: تعذر جلب «\${failed.query}»: \${failed.error}")
             }
-            if (results.isEmpty() && outcomes.all { it.results.isEmpty() }) {
-                add("لم تُستخرج نتائج ويب مباشرة. قد يكون مزود البحث محجوباً أو غيّر بنية الصفحة؛ روابط المصادر البديلة ما زالت متاحة.")
+            if (includeImages && imageError != null) add("بحث الصور: $imageError")
+            if (includeImages && imageResults.isEmpty() && imageError == null) {
+                add("لم تظهر صور مفهرسة مطابقة في Wikimedia Commons لهذه العبارة؛ تغطية هذا المصدر محدودة وليست بحث صور شاملاً لكل الويب.")
+            }
+            if (results.isEmpty()) {
+                add("لم تُستخرج نتائج مباشرة من مزودي البحث الذين أمكن الوصول إليهم. هذا لا يعني عدم وجود معلومات؛ قد يغيّر المزود بنية الصفحة أو يحدّ الطلبات.")
             }
         }.distinct()
 
@@ -158,8 +187,187 @@ class AdvancedPublicSearchEngine {
             query = query,
             results = results,
             warnings = warnings,
-            providersAttempted = outcomes.size + if (instantResults.isNotEmpty()) 1 else 0
+            providersAttempted = outcomes.size + (if (includeImages) 1 else 0) + (if (instantResults.isNotEmpty()) 1 else 0)
         )
+    }
+
+    private fun endpointsForQuery(query: String, primary: Boolean): List<SearchEndpoint> {
+        val encoded = enc(query)
+        return if (primary) {
+            listOf(
+                SearchEndpoint("DuckDuckGo", "https://html.duckduckgo.com/html/?q=$encoded&kl=wt-wt"),
+                SearchEndpoint("Bing Search", "https://www.bing.com/search?q=$encoded&count=10"),
+                SearchEndpoint("Brave Search", "https://search.brave.com/search?q=$encoded")
+            )
+        } else {
+            listOf(
+                SearchEndpoint("DuckDuckGo Lite", "https://lite.duckduckgo.com/lite/?q=$encoded"),
+                SearchEndpoint("Bing Search", "https://www.bing.com/search?q=$encoded&count=10")
+            )
+        }
+    }
+
+    private suspend fun searchProvider(
+        endpoint: SearchEndpoint,
+        query: String,
+        limit: Int
+    ): List<PublicProfileResult> = withContext(Dispatchers.IO) {
+        val html = fetchHtml(endpoint.url, timeoutMs = 6_500)
+        parseResults(html, limit, endpoint.provider)
+    }
+
+    private fun fetchHtml(endpoint: String, timeoutMs: Int): String {
+        val connection = (URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Accept", "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5")
+            setRequestProperty("Accept-Language", "en-US,en;q=0.8,ar;q=0.6")
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36 OSINTWorkbench/0.4")
+        }
+        try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                var total = 0
+                while (total < 1_500_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 1_500_000 - total))
+                    if (count <= 0) break
+                    out.write(buffer, 0, count)
+                    total += count
+                }
+                out.toString(StandardCharsets.UTF_8.name())
+            }.orEmpty()
+            if (status !in 200..299) throw IllegalStateException("HTTP $status from \${URL(endpoint).host}")
+            if (body.isBlank()) throw IllegalStateException("استجابة فارغة من \${URL(endpoint).host}")
+            if (body.contains("anomaly-modal", ignoreCase = true) || body.contains("bot challenge", ignoreCase = true)) {
+                throw IllegalStateException("أعاد مزود البحث تحدي وصول بدلاً من النتائج")
+            }
+            return body
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    internal fun parseResults(html: String, limit: Int, provider: String = "Public Web Search"): List<PublicProfileResult> {
+        val candidates = mutableListOf<Triple<String, String, String>>()
+
+        // DuckDuckGo HTML/Lite templates.
+        val ddgAnchors = Regex(
+            """(?is)<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*(?:result__a|result-link)[^"']*["'])[^>]*>.*?</a>"""
+        ).findAll(html).toList()
+        val snippets = Regex(
+            """(?is)<(?:a|div|td|p)\b(?=[^>]*\bclass\s*=\s*["'][^"']*(?:result__snippet|result-snippet|b_caption)[^"']*["'])[^>]*>(.*?)</(?:a|div|td|p)>"""
+        ).findAll(html).map { cleanHtml(it.groupValues[1]) }.toList()
+        for ((index, match) in ddgAnchors.withIndex()) {
+            val anchor = match.value
+            val attrs = anchor.substringBefore('>')
+            val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
+                .find(attrs)?.groupValues?.getOrNull(1) ?: continue
+            val title = cleanHtml(anchor.substringAfter('>').substringBeforeLast("</a>"))
+            if (title.isNotBlank()) candidates += Triple(href, title, snippets.getOrNull(index).orEmpty())
+        }
+
+        // Bing's result containers are more stable than page-wide generic anchors.
+        if (candidates.isEmpty()) {
+            val blocks = Regex(
+                """(?is)<li\b(?=[^>]*\bclass\s*=\s*["'][^"']*\bb_algo\b[^"']*["'])[^>]*>(.*?)</li>"""
+            ).findAll(html)
+            for (block in blocks) {
+                val content = block.groupValues[1]
+                val anchor = Regex("""(?is)<h2\b[^>]*>.*?<a\b([^>]*)>(.*?)</a>.*?</h2>""").find(content)
+                    ?: Regex("""(?is)<a\b([^>]*)>(.*?)</a>""").find(content)
+                    ?: continue
+                val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
+                    .find(anchor.groupValues[1])?.groupValues?.getOrNull(1) ?: continue
+                val title = cleanHtml(anchor.groupValues[2])
+                val snippet = Regex("""(?is)<p\b[^>]*>(.*?)</p>""").find(content)?.groupValues?.getOrNull(1)?.let(::cleanHtml).orEmpty()
+                if (title.isNotBlank()) candidates += Triple(href, title, snippet)
+                if (candidates.size >= limit) break
+            }
+        }
+
+        // Last-resort parser for result pages that keep titles inside an h2 anchor.
+        if (candidates.isEmpty()) {
+            val headings = Regex("""(?is)<h2\b[^>]*>.*?<a\b([^>]*)>(.*?)</a>.*?</h2>""").findAll(html)
+            for (heading in headings) {
+                val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
+                    .find(heading.groupValues[1])?.groupValues?.getOrNull(1) ?: continue
+                val title = cleanHtml(heading.groupValues[2])
+                if (title.isNotBlank()) candidates += Triple(href, title, "")
+                if (candidates.size >= limit) break
+            }
+        }
+
+        val blockedHosts = setOf("duckduckgo.com", "bing.com", "search.brave.com", "google.com", "microsoft.com")
+        return candidates.mapNotNull { (href, title, snippet) ->
+            val url = unwrapSearchUrl(href) ?: return@mapNotNull null
+            val host = sourceHost(url)
+            if (host.isBlank() || blockedHosts.any { host == it || host.endsWith(".$it") }) return@mapNotNull null
+            if (title.length < 3 || title.equals("cached", true) || title.equals("translate", true)) return@mapNotNull null
+            PublicProfileResult(
+                provider = "$provider · \${displayHost(host)}",
+                title = title.take(240),
+                description = snippet.ifBlank { "نتيجة ويب عامة مفهرسة · افتح المصدر للتحقق من النص والسياق." }.take(500),
+                url = url,
+                confidence = if (snippet.isBlank()) 62 else 73
+            )
+        }.distinctBy { canonicalUrl(it.url) }.take(limit)
+    }
+
+    private suspend fun searchWikimediaImages(query: String, limit: Int): List<PublicProfileResult> = withContext(Dispatchers.IO) {
+        val endpoint = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=\${enc(query)}&gsrnamespace=6&gsrlimit=\${limit.coerceIn(1, 12)}&prop=imageinfo&iiprop=url&iiurlwidth=560&format=json"
+        val root = JSONObject(fetchPublicApi(endpoint, "application/json", 8_000))
+        val pages = root.optJSONObject("query")?.optJSONObject("pages") ?: JSONObject()
+        val keys = pages.keys()
+        buildList {
+            while (keys.hasNext() && size < limit) {
+                val page = pages.optJSONObject(keys.next()) ?: continue
+                val title = page.optString("title").removePrefix("File:").ifBlank { continue }
+                val pageUrl = page.optString("fullurl").takeIf { it.startsWith("https://") }
+                    ?: "https://commons.wikimedia.org/wiki/\${enc("File:$title")}"
+                val imageInfo = page.optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
+                val imageUrl = imageInfo.optString("thumburl").ifBlank { imageInfo.optString("url") }
+                    .takeIf { it.startsWith("https://") } ?: continue
+                add(
+                    PublicProfileResult(
+                        provider = "Wikimedia Commons images",
+                        title = title,
+                        description = "صورة مفهرسة عامة من Wikimedia Commons. راجع صفحة المصدر والترخيص قبل إعادة الاستخدام.",
+                        url = pageUrl,
+                        confidence = 78,
+                        relevanceScore = 55,
+                        imageUrl = imageUrl
+                    )
+                )
+            }
+        }
+    }
+
+    private fun fetchPublicApi(endpoint: String, accept: String, timeoutMs: Int): String {
+        val connection = (URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = timeoutMs
+            readTimeout = timeoutMs
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Accept", accept)
+            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (public-source research; see project README)")
+        }
+        try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.use { it.bufferedReader(StandardCharsets.UTF_8).readText() }.orEmpty()
+            if (status !in 200..299) throw IllegalStateException("HTTP $status from \${URL(endpoint).host}")
+            if (body.isBlank()) throw IllegalStateException("استجابة فارغة من \${URL(endpoint).host}")
+            return body
+        } finally {
+            connection.disconnect()
+        }
     }
 
     /**
@@ -440,9 +648,12 @@ class AdvancedPublicSearchEngine {
         return values.filter(String::isNotBlank)
     }
 
+    private data class SearchEndpoint(val provider: String, val url: String)
+
     private data class SearchAttempt(
         val index: Int,
         val query: String,
+        val provider: String,
         val results: List<PublicProfileResult>,
         val error: String?
     )

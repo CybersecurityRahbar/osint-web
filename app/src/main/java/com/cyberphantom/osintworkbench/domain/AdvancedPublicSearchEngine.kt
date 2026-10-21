@@ -69,7 +69,8 @@ class AdvancedPublicSearchEngine {
                     add("\"$query\"")
                     if (digits != query) add("\"$digits\"")
                     add("site:reddit.com \"$digits\"")
-                    add("\"$digits\" (site:tellows.com OR site:shouldianswer.com OR site:sync.me)")
+                    add("\"$digits\" (site:github.com OR site:gitlab.com OR site:stackoverflow.com)")
+                    add("\"$digits\" (site:facebook.com OR site:instagram.com OR site:tiktok.com OR site:x.com OR site:youtube.com)")
                     normalized.forEach { if (it != query && it != digits) add("\"$it\"") }
                 }.distinct().take(6)
             }

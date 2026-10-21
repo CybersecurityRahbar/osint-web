@@ -584,3 +584,14 @@
 - راجعت سجل Android CI الفعلي للـ main، run `39667705945`، ووجدت خطأ ترجمة واحداً: `BroadPublicSearchAdapter.kt:91` يستدعي `fetch(provider.url, 4_500)` رغم أن الدالة تتطلب `accept` ثالثاً.
 - تم إصلاح الاستدعاء بإضافة ترويسة Accept المناسبة لصفحات HTML: `text/html,application/xhtml+xml,*/*`. لم يُعدّل ملف `ALKASER_OSINT.py`.
 - هذا الإصلاح موجود على `main` في commit `2812052a65496afe7a640fac78bcd31b1799ee20`. يجب التحقق من تشغيل Android CI الذي بدأ بسبب هذا التعديل؛ لا تُعد النسخة ناجحة قبل اكتمال unit tests وassembleDebug ورفع artifact.
+
+
+### إصلاح تثبيت APK والتحقق من CI على main — 2026-10-21
+- راجعت GitHub Actions الحالي، run `39668887654`، على commit `7b3642bcf8216ad0d116ff3ef59d21fde44f4d92`: نجحت اختبارات الوحدات، وبناء Debug APK، ورفع artifact.
+- سبب خطأ البناء السابق كان استدعاء `fetch(provider.url, 4_500)` بدون وسيط `accept` في `BroadPublicSearchAdapter.kt`. أصلح الاستدعاء على `main` في commit `2812052a65496afe7a640fac78bcd31b1799ee20`؛ لكن تشغيل ذلك commit أُلغِي نتيجة تشغيل أحدث، ونجاح run 320 اللاحق يؤكد أن الإصلاح والنسخة الحالية اجتازا البناء.
+- فُك ضغط artifact من run `39668887654` وفُحصت سلامة ZIP الخارجي والـ APK الداخلي. الملف الذي ينزّله GitHub من Actions هو **ZIP حاوي للـ APK** وليس APK قابلاً للتثبيت مباشرة. ملف APK الداخلي اسمه `app-debug.apk`.
+- فحص manifest للـ APK السابق أظهر `versionName=0.5.0-preview`، و`minSdk=26`، و`targetSdk=36`، ومعرّف التطبيق `com.cyberphantom.osintworkbench.preview`. سجل APK نفسه سليم بنيوياً ويحتوي توقيع APK. لم يتسنَّ اختبار التثبيت على هاتف المستخدم.
+- احتمال قوي لفشل التثبيت عند التحديث فوق نسخة Preview سابقة: مفاتيح Debug التي ينشئها GitHub Actions قد تختلف بين التشغيلات. Android يرفض عادةً تحديث الحزمة نفسها إذا اختلف توقيعها، حتى لو كان APK صالحاً.
+- لتفادي التعارض مع أي نسخة Preview موجودة، تم تحديث Debug suffix في `app/build.gradle.kts` إلى `.preview050`، بحيث يصبح معرّف هذه النسخة `com.cyberphantom.osintworkbench.preview050` واسمها `OSINT Workbench Preview 0.5`. هذا لا يغير معرّف النسخة الأصلية `com.cyberphantom.osintworkbench` ولا يمس قاعدة بياناتها.
+- تم تحديث `README.md` وWorkflow `.github/workflows/android.yml` لتوضيح أن الـ artifact ZIP يحتوي `app-debug.apk`، ولإضافة ملخص تثبيت في GitHub Actions ولتسمية artifact الجديد `osint-workbench-v0.5-preview-apk`.
+- **الحالة بعد هذه التغييرات:** يجب انتظار/فحص تشغيل Android CI الناتج من آخر commit `e86491bd7b71c434569a97baf74bfc46f9a9cf3d`. لا تسلَّم APK v0.5 ذي المعرّف الجديد قبل نجاح الاختبارات والبناء ورفع artifact والتحقق من manifest وZIP. ملف `ALKASER_OSINT.py` بقي مرجعاً فقط ولم يتم تعديله.

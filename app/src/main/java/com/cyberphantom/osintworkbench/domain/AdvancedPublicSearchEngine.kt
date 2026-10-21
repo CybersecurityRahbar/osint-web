@@ -119,11 +119,11 @@ class AdvancedPublicSearchEngine {
         includeImages: Boolean = false
     ): PublicWebSearchResponse {
         val query = rawQuery.trim()
-        val searchQueries = buildSearchQueries(query, kind).take(5)
+        val searchQueries = buildSearchQueries(query, kind).take(6)
         val limit = maxResults.coerceIn(5, 40)
 
         // Use multiple public search frontends instead of trusting a single HTML template.
-        // The primary query is sent to three providers; expanded queries use two. This is
+        // The primary query is sent to four providers; expanded queries use two. This is
         // intentionally bounded to avoid hammering public services from a mobile device.
         val batch = coroutineScope {
             // Use several engines without flooding public endpoints from a mobile device.

@@ -1,11 +1,13 @@
 package com.cyberphantom.osintworkbench.domain
 
 import android.util.Xml
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -37,32 +39,27 @@ class MultiSourceNewsEngine {
         Publisher("العربية", "alarabiya.net", "ar", "SA", "SA:ar")
     )
 
-    suspend fun search(query: String, maxRecords: Int = 40): NewsSearchResult = withContext(Dispatchers.IO) {
+    suspend fun search(query: String, maxRecords: Int = 40, includeImages: Boolean = true): NewsSearchResult = withContext(Dispatchers.IO) {
         val clean = query.trim()
         require(clean.isNotBlank()) { "أدخل كلمات البحث عن الأخبار." }
         require(clean.length <= 180) { "عبارة البحث طويلة جداً." }
         val limit = maxRecords.coerceIn(1, 60)
 
         val outcomes = coroutineScope {
+            // Keep concurrency bounded: a phone should not bombard GDELT and ten RSS feeds at once.
+            val sourceSemaphore = Semaphore(4)
             val tasks = mutableListOf<kotlinx.coroutines.Deferred<SourceOutcome>>()
             tasks += async {
-                runCatching { queryGdelt(clean, limit) }.fold(
-                    { SourceOutcome("GDELT", it, null) },
-                    { SourceOutcome("GDELT", emptyList(), it.message ?: "تعذر الوصول") }
-                )
+                runSource(sourceSemaphore, "GDELT") { queryGdelt(clean, limit, includeImages) }
             }
             tasks += async {
-                runCatching { queryGoogleNews(clean, limit, null) }.fold(
-                    { SourceOutcome("Google News RSS", it, null) },
-                    { SourceOutcome("Google News RSS", emptyList(), it.message ?: "تعذر الوصول") }
-                )
+                runSource(sourceSemaphore, "Google News RSS") { queryGoogleNews(clean, limit, null, includeImages) }
             }
             publishers.forEach { publisher ->
                 tasks += async {
-                    runCatching { queryGoogleNews(clean, maxOf(5, limit / 2), publisher) }.fold(
-                        { SourceOutcome(publisher.name, it, null) },
-                        { SourceOutcome(publisher.name, emptyList(), it.message ?: "تعذر الوصول") }
-                    )
+                    runSource(sourceSemaphore, publisher.name) {
+                        queryGoogleNews(clean, maxOf(5, limit / 2), publisher, includeImages)
+                    }
                 }
             }
             tasks.awaitAll()
@@ -88,11 +85,68 @@ class MultiSourceNewsEngine {
         NewsSearchResult(clean, articles, warning)
     }
 
-    private suspend fun queryGdelt(query: String, maxRecords: Int): List<NewsArticle> = withContext(Dispatchers.IO) {
-        val endpoint = "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=${maxRecords.coerceIn(1, 50)}"
-        val root = JSONObject(getText(endpoint, 14_000, "application/json"))
+    private suspend fun runSource(
+        semaphore: Semaphore,
+        source: String,
+        fetch: suspend () -> List<NewsArticle>
+    ): SourceOutcome {
+        semaphore.acquire()
+        try {
+            return try {
+                SourceOutcome(source, fetch(), null)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                SourceOutcome(source, emptyList(), error.message ?: "تعذر الوصول")
+            }
+        } finally {
+            semaphore.release()
+        }
+    }
+
+    private suspend fun queryGdelt(query: String, maxRecords: Int, includeImages: Boolean): List<NewsArticle> = withContext(Dispatchers.IO) {
+        val limit = maxRecords.coerceIn(1, 50)
+        // Retry a simpler request if the richer one returns an HTML error page or is rate-limited.
+        val endpoints = listOf(
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=$limit&timespan=1week",
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&maxrecords=${minOf(limit, 20)}"
+        )
+        var lastFailure: Exception? = null
+        for ((endpointIndex, endpoint) in endpoints.withIndex()) {
+            for (attempt in 0..2) {
+                try {
+                    val raw = getText(endpoint, 12_000, "application/json, text/plain, */*")
+                    val root = try {
+                        JSONObject(raw)
+                    } catch (error: Exception) {
+                        val preview = raw.replace(Regex("\\s+"), " ").take(180)
+                        throw IllegalStateException("GDELT returned non-JSON data: $preview", error)
+                    }
+                    // A successful JSON response clears any transient failure from an earlier variant.
+                    lastFailure = null
+                    val articles = parseGdeltResponse(root, includeImages)
+                    if (articles.isNotEmpty()) return@withContext articles
+                    // Valid empty data is not a network error; try the simpler query variant.
+                    break
+                } catch (error: Exception) {
+                    lastFailure = error
+                    val message = error.message.orEmpty()
+                    val retryable = listOf("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "timed out", "timeout")
+                        .any { message.contains(it, ignoreCase = true) }
+                    if (!retryable || attempt == 2) break
+                    Thread.sleep(if (attempt == 0) 350L else 850L)
+                }
+            }
+            if (endpointIndex == endpoints.lastIndex && lastFailure != null) {
+                throw IllegalStateException("GDELT DOC API failed after retries: " + (lastFailure?.message ?: "unknown error"), lastFailure)
+            }
+        }
+        emptyList()
+    }
+
+    internal fun parseGdeltResponse(root: JSONObject, includeImages: Boolean = true): List<NewsArticle> {
         val items = root.optJSONArray("articles") ?: JSONArray()
-        buildList {
+        return buildList {
             for (index in 0 until items.length()) {
                 val item = items.optJSONObject(index) ?: continue
                 val url = item.optString("url").takeIf { it.startsWith("https://") } ?: continue
@@ -107,18 +161,19 @@ class MultiSourceNewsEngine {
                         language = item.optString("language"),
                         sourceCountry = item.optString("sourcecountry"),
                         publisherName = publisherLabel(domain),
-                        imageUrl = item.optString("socialimage").takeIf { it.startsWith("https://") },
+                        imageUrl = item.optString("socialimage").takeIf { includeImages && it.startsWith("https://") },
                         provider = "GDELT DOC API"
                     )
                 )
             }
-        }
+        }.distinctBy { it.url }
     }
 
     private suspend fun queryGoogleNews(
         query: String,
         maxRecords: Int,
-        publisher: Publisher?
+        publisher: Publisher?,
+        includeImages: Boolean
     ): List<NewsArticle> = withContext(Dispatchers.IO) {
         val queryText = if (publisher == null) query else "$query site:${publisher.domain}"
         val language = publisher?.language ?: "ar"
@@ -126,7 +181,7 @@ class MultiSourceNewsEngine {
         val edition = publisher?.edition ?: "YE:ar"
         val endpoint = "https://news.google.com/rss/search?q=${enc(queryText)}&hl=${enc(language)}&gl=${enc(country)}&ceid=${enc(edition)}"
         val xml = getText(endpoint, 12_000, "application/rss+xml, application/xml, text/xml")
-        parseRss(xml, publisher, language, country)
+        parseRss(xml, publisher, language, country, includeImages)
             .take(maxRecords.coerceIn(1, 60))
     }
 
@@ -134,7 +189,8 @@ class MultiSourceNewsEngine {
         xml: String,
         requestedPublisher: Publisher?,
         language: String,
-        country: String
+        country: String,
+        includeImages: Boolean = true
     ): List<NewsArticle> {
         val parser = Xml.newPullParser()
         parser.setInput(StringReader(xml))
@@ -200,7 +256,7 @@ class MultiSourceNewsEngine {
                             language = language,
                             sourceCountry = country,
                             publisherName = actualPublisher,
-                            imageUrl = imageUrl.takeIf { it.startsWith("https://") },
+                            imageUrl = imageUrl.takeIf { includeImages && it.startsWith("https://") },
                             provider = if (requestedPublisher == null) "Google News RSS" else "Google News RSS · ${requestedPublisher.name}"
                         )
                     }
@@ -264,15 +320,27 @@ class MultiSourceNewsEngine {
             instanceFollowRedirects = true
             useCaches = false
             setRequestProperty("Accept", accept)
-            setRequestProperty("User-Agent", "OSINT-Workbench/0.3 (public research app)")
+            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (public-source research; see project README)")
         }
         try {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.use { input ->
-                BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8)).use { it.readText() }
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                var total = 0
+                while (total < 512_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 512_000 - total))
+                    if (count <= 0) break
+                    out.write(buffer, 0, count)
+                    total += count
+                }
+                out.toString(StandardCharsets.UTF_8.name())
             }.orEmpty()
-            if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
+            if (status !in 200..299) {
+                val preview = body.replace(Regex("\\s+"), " ").take(160)
+                throw IllegalStateException("HTTP $status from ${URL(endpoint).host}" + if (preview.isBlank()) "" else " · $preview")
+            }
             if (body.isBlank()) throw IllegalStateException("Empty response from ${URL(endpoint).host}")
             return body
         } finally {

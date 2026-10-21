@@ -59,6 +59,23 @@ class BroadPublicSearchAdapterTest {
     }
 
     @Test
+    fun parsesGoogleHeadingAndUnwrapsExternalDestination() {
+        val html = """
+            <div class="MjjYud">
+              <a href="/url?q=https%3A%2F%2Fexample.org%2Fresearch&amp;sa=U">
+                <h3 class="LC20lb">Google public result</h3>
+              </a>
+            </div>
+        """.trimIndent()
+
+        val results = adapter.parseHtml(html, "Google", 10)
+
+        assertEquals(1, results.size)
+        assertEquals("Google public result", results.single().title)
+        assertEquals("https://example.org/research", results.single().url)
+    }
+
+    @Test
     fun parsesMojeekResultAnchorTemplate() {
         val html = """
             <ul class="results-standard">

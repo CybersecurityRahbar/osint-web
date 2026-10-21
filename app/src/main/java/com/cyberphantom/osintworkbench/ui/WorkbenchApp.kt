@@ -488,6 +488,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
     var domain by rememberSaveable { mutableStateOf("") }
     var includeCt by rememberSaveable { mutableStateOf(true) }
     var includeAdvanced by rememberSaveable { mutableStateOf(true) }
+    var includeActiveChecks by rememberSaveable { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<ScanReport?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -499,7 +500,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
     ) {
         ScreenHeading(
             title = "ذكاء النطاقات",
-            subtitle = "استطلاع سلبي للأصول العامة",
+            subtitle = "استطلاع عام مع اختبارات اتصال اختيارية محدودة",
             icon = Icons.Filled.Dns
         )
         Surface(
@@ -510,7 +511,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("هدف الاستطلاع", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "أدخل نطاقاً تملكه أو لديك تصريح بفحصه. لا تنفذ هذه الوحدة فحص منافذ أو محاولات دخول.",
+                    "أدخل نطاقاً تملكه أو لديك تصريح بفحصه. الفحوص النشطة اختيارية ومحدودة؛ لا تكشف كل الأبواب الخلفية ولا تنفذ استغلالاً أو تسجيل دخول.",
                     color = WorkbenchColors.TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 19.sp
@@ -545,6 +546,20 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                         Text("RDAP والتواريخ والأرشيف وتحليل رؤوس HTTPS", fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = includeActiveChecks, onCheckedChange = { includeActiveChecks = it })
+                    Column(Modifier.weight(1f)) {
+                        Text("فحوص اتصال محدودة (اختياري)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "اختبار 23 منفذاً شائعاً وفحص مؤشرات عامة لمسارات حساسة. فعّله فقط للأصول المصرح بها.",
+                            fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
+                        )
+                    }
+                }
                 if (error != null) {
                     Text(error.orEmpty(), color = WorkbenchColors.Red, fontSize = 12.sp)
                 }
@@ -555,7 +570,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                             error = null
                             report = null
                             try {
-                                val result = ReconEngine().scanDomain(domain, includeCt, includeAdvanced)
+                                val result = ReconEngine().scanDomain(domain, includeCt, includeAdvanced, includeActiveChecks)
                                 withContext(Dispatchers.IO) {
                                     val rootId = store.upsertEntity(result.target, "DOMAIN", "User supplied", 100)
                                     result.records.forEach { item ->
@@ -574,10 +589,23 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                             "DNS_NS" -> "USES_NAMESERVER"
                                             "DNS_MX" -> "USES_MAIL_EXCHANGE"
                                             "SUBDOMAIN" -> "SUBDOMAIN_OF"
+                                            "SUBDOMAIN_ADDRESS" -> "SUBDOMAIN_RESOLVES_TO"
+                                            "SUBDOMAIN_DNS_STATUS" -> "SUBDOMAIN_DNS_LOOKUP_STATUS"
                                             "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
+                                            "WAYBACK_STATUS" -> "ARCHIVE_LOOKUP_STATUS"
+                                            "ROBOTS_TXT" -> "HAS_ROBOTS_POLICY"
+                                            "ROBOTS_DISALLOW" -> "MENTIONS_CRAWLER_PATH"
+                                            "SITEMAP_SUMMARY" -> "HAS_PUBLIC_SITEMAP"
+                                            "SITEMAP_URL" -> "LISTS_PUBLIC_URL"
+                                            "SECURITY_TXT_METADATA" -> "PUBLISHES_SECURITY_CONTACT_METADATA"
                                             "RDAP_REGISTRAR" -> "REGISTERED_THROUGH"
                                             "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED" -> "REGISTRATION_METADATA_FOR"
                                             "HTTPS_REDIRECT" -> "REDIRECTS_TO"
+                                            "IP_GEOLOCATION" -> "GEOLOCATED_AT_APPROXIMATE"
+                                            "IP_GEOLOCATION_UNAVAILABLE" -> "GEOLOCATION_LOOKUP_STATUS"
+                                            "OPEN_TCP_PORT" -> "EXPOSES_TCP_PORT"
+                                            "POTENTIAL_SENSITIVE_EXPOSURE" -> "POTENTIAL_PUBLIC_EXPOSURE_INDICATOR"
+                                            "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY" -> "HAS_CHECK_SUMMARY"
                                             "WEB_IMAGE", "WEB_PREVIEW_IMAGE" -> "HAS_PUBLIC_IMAGE"
                                             "WEB_TITLE" -> "HAS_PAGE_TITLE"
                                             "DNS_TXT" -> "HAS_DNS_TEXT_RECORD"
@@ -586,6 +614,11 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         }
                                         val rootToNode = item.kind in setOf(
                                             "DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "HTTPS_REDIRECT",
+                                            "WAYBACK_STATUS", "IP_GEOLOCATION", "IP_GEOLOCATION_UNAVAILABLE",
+                                            "ROBOTS_TXT", "ROBOTS_DISALLOW", "SITEMAP_SUMMARY", "SITEMAP_URL",
+                                            "SECURITY_TXT_METADATA", "SUBDOMAIN_ADDRESS", "SUBDOMAIN_DNS_STATUS",
+                                            "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
+                                            "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY",
                                             "WEB_IMAGE", "WEB_PREVIEW_IMAGE", "WEB_TITLE", "DNS_TXT",
                                             "HTTPS_STATUS", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY",
                                             "TECH_META_GENERATOR", "SECURITY_HEADER_NOT_OBSERVED", "RDAP_REGISTRAR"
@@ -701,7 +734,7 @@ private fun ScanSummaryCard(report: ScanReport) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 SummaryPill("${report.records.size} نتيجة", WorkbenchColors.Teal)
                 SummaryPill("${report.warnings.size} ملاحظة", WorkbenchColors.Amber)
-                SummaryPill("سلبي فقط", WorkbenchColors.Blue)
+                SummaryPill(if (report.records.any { it.kind == "PORT_SCAN_SUMMARY" }) "فحوص نشطة محدودة" else "جمع سلبي", WorkbenchColors.Blue)
             }
         }
     }
@@ -953,7 +986,11 @@ private fun GraphNetwork(relations: List<RelationRow>) {
 private fun isParentToChildRelation(relation: String): Boolean = relation in setOf(
     "RESOLVES_TO", "USES_NAMESERVER", "USES_MAIL_EXCHANGE", "REDIRECTS_TO",
     "HAS_PUBLIC_IMAGE", "HAS_PAGE_TITLE", "HAS_DNS_TEXT_RECORD", "HAS_OBSERVED_PROPERTY",
-    "REGISTERED_THROUGH"
+    "REGISTERED_THROUGH", "GEOLOCATED_AT_APPROXIMATE", "EXPOSES_TCP_PORT",
+    "POTENTIAL_PUBLIC_EXPOSURE_INDICATOR", "HAS_CHECK_SUMMARY", "ARCHIVE_LOOKUP_STATUS",
+    "HAS_ROBOTS_POLICY", "MENTIONS_CRAWLER_PATH", "HAS_PUBLIC_SITEMAP", "LISTS_PUBLIC_URL",
+    "PUBLISHES_SECURITY_CONTACT_METADATA", "SUBDOMAIN_RESOLVES_TO", "SUBDOMAIN_DNS_LOOKUP_STATUS",
+    "GEOLOCATION_LOOKUP_STATUS"
 )
 
 private fun relationHubValue(relation: RelationRow): String =
@@ -967,6 +1004,19 @@ private fun relationLeafValue(relation: RelationRow): String =
 
 private fun relationDescription(relation: String): String = when (relation) {
     "RESOLVES_TO" -> "سجل DNS يربط النطاق بعنوان IP"
+    "SUBDOMAIN_RESOLVES_TO" -> "سجل DNS لعُقدة فرعية من شهادة عامة"
+    "SUBDOMAIN_DNS_LOOKUP_STATUS" -> "حالة التحقق من DNS لاسم فرعي"
+    "GEOLOCATED_AT_APPROXIMATE" -> "تقدير موقع عنوان IP"
+    "GEOLOCATION_LOOKUP_STATUS" -> "حالة محاولة تحديد الموقع الجغرافي"
+    "EXPOSES_TCP_PORT" -> "اتصال TCP مفتوح على منفذ شائع"
+    "POTENTIAL_PUBLIC_EXPOSURE_INDICATOR" -> "مؤشر محتمل على مسار عام حساس"
+    "HAS_CHECK_SUMMARY" -> "ملخص فحص محدود"
+    "ARCHIVE_LOOKUP_STATUS" -> "نتيجة محاولة استعلام الأرشيف"
+    "HAS_ROBOTS_POLICY" -> "ملف robots.txt عام"
+    "MENTIONS_CRAWLER_PATH" -> "مسار مذكور في robots.txt"
+    "HAS_PUBLIC_SITEMAP" -> "ملف sitemap عام"
+    "LISTS_PUBLIC_URL" -> "عنوان منشور في sitemap"
+    "PUBLISHES_SECURITY_CONTACT_METADATA" -> "بيانات إفصاح أمني منشورة"
     "USES_NAMESERVER" -> "سجل NS يشير إلى خادم أسماء"
     "USES_MAIL_EXCHANGE" -> "سجل MX يحدد خادم بريد"
     "SUBDOMAIN_OF" -> "اسم نطاق فرعي مكتشف من مصدر عام"
@@ -1142,7 +1192,7 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: 
                 }
             }
         }
-        Text("OSINT Workbench · 0.3.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+        Text("OSINT Workbench · 0.4.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

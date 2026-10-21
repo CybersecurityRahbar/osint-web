@@ -21,7 +21,8 @@ data class ReconRecord(
     val source: String,
     val sourceUrl: String,
     val confidence: Int,
-    val detail: String = ""
+    val detail: String = "",
+    val previewImageUrl: String? = null
 )
 
 data class ScanReport(
@@ -51,6 +52,7 @@ data class ScanReport(
                     .put("sourceUrl", record.sourceUrl)
                     .put("confidence", record.confidence)
                     .put("detail", record.detail)
+                    .put("previewImageUrl", record.previewImageUrl ?: "")
             )
         }
         root.put("records", items)
@@ -71,7 +73,8 @@ data class ScanReport(
                             source = item.optString("source"),
                             sourceUrl = item.optString("sourceUrl"),
                             confidence = item.optInt("confidence", 50).coerceIn(0, 100),
-                            detail = item.optString("detail")
+                            detail = item.optString("detail"),
+                            previewImageUrl = item.optString("previewImageUrl").takeIf { it.startsWith("https://") }
                         )
                     )
                 }

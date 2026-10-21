@@ -23,6 +23,19 @@ class LocalIntelligenceEngineTest {
     }
 
     @Test
+    fun differentSourcesAreReportedAsCorroborationWithoutClaimingIndependence() {
+        val relations = listOf(
+            RelationRow("a.example", "DOMAIN", "203.0.113.8", "DNS_A", "RESOLVES_TO", "Cloudflare DNS", 91, 10),
+            RelationRow("a.example", "DOMAIN", "203.0.113.8", "DNS_A", "RESOLVES_TO", "Google Public DNS", 91, 11)
+        )
+
+        val insights = LocalIntelligenceEngine.analyze(emptyList(), relations, nowMillis = 20)
+        assertTrue(insights.any {
+            it.title.contains("أكثر من مصدر") && it.explanation.contains("لا يضمن استقلال")
+        })
+    }
+
+    @Test
     fun noEvidenceDoesNotInventRelationships() {
         val insights = LocalIntelligenceEngine.analyze(emptyList(), emptyList(), nowMillis = 1)
         assertTrue(insights.any { it.title.contains("الأدلة غير كافية") })

@@ -7,6 +7,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URI
@@ -117,17 +119,19 @@ class AdvancedPublicSearchEngine {
         includeImages: Boolean = false
     ): PublicWebSearchResponse {
         val query = rawQuery.trim()
-        val searchQueries = buildSearchQueries(query, kind).take(4)
+        val searchQueries = buildSearchQueries(query, kind).take(5)
         val limit = maxResults.coerceIn(5, 40)
 
         // Use multiple public search frontends instead of trusting a single HTML template.
         // The primary query is sent to three providers; expanded queries use two. This is
         // intentionally bounded to avoid hammering public services from a mobile device.
         val batch = coroutineScope {
+            // Use several engines without flooding public endpoints from a mobile device.
+            val sourceSemaphore = Semaphore(4)
             val searchTasks = searchQueries.flatMapIndexed { index, searchQuery ->
                 endpointsForQuery(searchQuery, primary = index == 0).map { endpoint ->
                     async {
-                        runCatching { searchProvider(endpoint, searchQuery, minOf(12, limit)) }
+                        runCatching { sourceSemaphore.withPermit { searchProvider(endpoint, minOf(12, limit)) } }
                             .fold(
                                 onSuccess = { SearchAttempt(index, searchQuery, endpoint.provider, it, null) },
                                 onFailure = {
@@ -159,7 +163,8 @@ class AdvancedPublicSearchEngine {
 
         // The Instant Answer endpoint is a small knowledge-panel fallback, not a replacement
         // for web-index hits.
-        val instantResults = if (indexedResults.size < minOf(5, limit)) {
+        val attemptedInstantAnswer = indexedResults.size < minOf(5, limit)
+        val instantResults = if (attemptedInstantAnswer) {
             runCatching { searchInstantAnswer(query, limit) }.getOrDefault(emptyList())
                 .map { result -> result.copy(relevanceScore = calculateRelevance(query, kind, result, 0)) }
         } else emptyList()
@@ -192,7 +197,7 @@ class AdvancedPublicSearchEngine {
             query = query,
             results = results,
             warnings = warnings,
-            providersAttempted = outcomes.size + (if (includeImages) 1 else 0) + (if (instantResults.isNotEmpty()) 1 else 0)
+            providersAttempted = outcomes.size + (if (includeImages) 1 else 0) + (if (attemptedInstantAnswer) 1 else 0)
         )
     }
 
@@ -214,7 +219,6 @@ class AdvancedPublicSearchEngine {
 
     private suspend fun searchProvider(
         endpoint: SearchEndpoint,
-        query: String,
         limit: Int
     ): List<PublicProfileResult> = withContext(Dispatchers.IO) {
         val html = fetchHtml(endpoint.url, timeoutMs = 6_500)
@@ -454,7 +458,8 @@ class AdvancedPublicSearchEngine {
         }
         try {
             val status = connection.responseCode
-            val body = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
             if (status !in 200..299 || body.isBlank()) return@withContext emptyList()
             val root = JSONObject(body)
             val results = mutableListOf<PublicProfileResult>()
@@ -503,86 +508,6 @@ class AdvancedPublicSearchEngine {
         } finally {
             connection.disconnect()
         }
-    }
-
-    private suspend fun searchDuckDuckGo(query: String, limit: Int): List<PublicProfileResult> =
-        withContext(Dispatchers.IO) {
-            val encoded = URLEncoder.encode(query, StandardCharsets.UTF_8.name())
-            val endpoints = listOf(
-                "https://html.duckduckgo.com/html/?q=$encoded&kl=xa-en",
-                "https://lite.duckduckgo.com/lite/?q=$encoded"
-            )
-            var lastFailure: Exception? = null
-            for (endpoint in endpoints) {
-                try {
-                    val html = fetchHtml(endpoint, timeoutMs = 9_000)
-                    val parsed = parseResults(html, limit)
-                    if (parsed.isNotEmpty()) return@withContext parsed
-                } catch (error: Exception) {
-                    lastFailure = error
-                }
-            }
-            if (lastFailure != null) throw IllegalStateException(lastFailure.message ?: "Search source unavailable")
-            emptyList()
-        }
-
-    private fun fetchHtml(endpoint: String, timeoutMs: Int): String {
-        val connection = (URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = timeoutMs
-            readTimeout = timeoutMs
-            instanceFollowRedirects = true
-            useCaches = false
-            setRequestProperty("Accept", "text/html,application/xhtml+xml")
-            setRequestProperty("Accept-Language", "en-US,en;q=0.8,ar;q=0.6")
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36")
-        }
-        try {
-            val status = connection.responseCode
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val body = stream?.use { it.readBytes().toString(StandardCharsets.UTF_8) }.orEmpty()
-            if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
-            if (body.isBlank()) throw IllegalStateException("Empty response from ${URL(endpoint).host}")
-            if (body.contains("anomaly-modal", ignoreCase = true) || body.contains("bot challenge", ignoreCase = true)) {
-                throw IllegalStateException("قدّم مزود البحث تحدي وصول بدلاً من النتائج")
-            }
-            return body
-        } finally {
-            connection.disconnect()
-        }
-    }
-
-    private fun parseResults(html: String, limit: Int): List<PublicProfileResult> {
-        val anchors = Regex(
-            """(?is)<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*(?:result__a|result-link)[^"']*["'])[^>]*>.*?</a>"""
-        ).findAll(html).toList()
-        val snippets = Regex(
-            """(?is)<(?:a|div|td)\b(?=[^>]*\bclass\s*=\s*["'][^"']*(?:result__snippet|result-snippet)[^"']*["'])[^>]*>(.*?)</(?:a|div|td)>"""
-        ).findAll(html).map { cleanHtml(it.groupValues[1]) }.toList()
-        return buildList {
-            for ((index, match) in anchors.withIndex()) {
-                if (size >= limit) break
-                val anchor = match.value
-                val attrs = anchor.substringBefore('>')
-                val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
-                    .find(attrs)?.groupValues?.getOrNull(1) ?: continue
-                val title = cleanHtml(anchor.substringAfter('>').substringBeforeLast("</a>"))
-                if (title.isBlank()) continue
-                val url = unwrapSearchUrl(href) ?: continue
-                val host = sourceHost(url)
-                if (host.isBlank() || host.contains("duckduckgo.com")) continue
-                val snippet = snippets.getOrNull(index).orEmpty()
-                add(
-                    PublicProfileResult(
-                        provider = "DuckDuckGo · ${displayHost(host)}",
-                        title = title.take(240),
-                        description = snippet.ifBlank { "نتيجة مفهرسة عامة · افتح المصدر للتحقق من النص والسياق." }.take(500),
-                        url = url,
-                        confidence = if (snippet.isBlank()) 68 else 74
-                    )
-                )
-            }
-        }.distinctBy { canonicalUrl(it.url) }
     }
 
     private fun unwrapSearchUrl(rawHref: String): String? = runCatching {

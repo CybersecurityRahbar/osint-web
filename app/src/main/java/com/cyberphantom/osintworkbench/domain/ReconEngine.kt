@@ -146,6 +146,11 @@ class ReconEngine {
                         runCatching { inspectHttps(domain) }
                             .onFailure { warnings += "تحليل HTTPS: ${it.message ?: "تعذر الوصول إلى الموقع"}" }
                             .getOrDefault(emptyList())
+                    },
+                    async {
+                        runCatching { inspectPublicDiscoveryFiles(domain) }
+                            .onFailure { warnings += "ملفات الاكتشاف العامة: ${it.message ?: "تعذر فحص robots/sitemap/security.txt"}" }
+                            .getOrDefault(emptyList())
                     }
                 ).awaitAll().flatten()
             }
@@ -633,6 +638,171 @@ class ReconEngine {
         }
         return null
     }
+
+    private suspend fun inspectPublicDiscoveryFiles(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
+        val paths = listOf("/robots.txt", "/sitemap.xml", "/.well-known/security.txt", "/security.txt")
+        coroutineScope {
+            paths.map { path ->
+                async(Dispatchers.IO) {
+                    fetchPublicDiscoveryFile(domain, path)
+                }
+            }.awaitAll().flatten()
+        }
+    }
+
+    private fun fetchPublicDiscoveryFile(domain: String, path: String): List<ReconRecord> {
+        for (scheme in listOf("https", "http")) {
+            val endpoint = "$scheme://$domain$path"
+            val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 3_500
+                readTimeout = 4_000
+                instanceFollowRedirects = true
+                useCaches = false
+                setRequestProperty("Range", "bytes=0-98303")
+                setRequestProperty("Accept", "text/plain,application/xml,text/xml,*/*")
+                setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (passive public discovery)")
+            }
+            try {
+                val status = connection.responseCode
+                if (status !in 200..299) continue
+                val actualUrl = connection.url.toString()
+                val body = connection.inputStream.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(4_096)
+                    var total = 0
+                    while (total < 98_304) {
+                        val count = input.read(buffer, 0, minOf(buffer.size, 98_304 - total))
+                        if (count <= 0) break
+                        out.write(buffer, 0, count)
+                        total += count
+                    }
+                    out.toString(StandardCharsets.UTF_8.name())
+                }
+                val records = parsePublicDiscoveryFile(path, body, actualUrl)
+                if (records.isNotEmpty()) return records
+            } catch (_: Exception) {
+                // Try the other scheme; this check reads only small, public metadata files.
+            } finally {
+                connection.disconnect()
+            }
+        }
+        return emptyList()
+    }
+
+    internal fun parsePublicDiscoveryFile(path: String, body: String, sourceUrl: String): List<ReconRecord> {
+        if (body.isBlank()) return emptyList()
+        return when {
+            path.endsWith("/robots.txt") -> {
+                val lines = body.lineSequence().map(String::trim)
+                    .filter { it.isNotBlank() && !it.startsWith("#") }.toList()
+                val sitemaps = lines.mapNotNull { line ->
+                    if (line.startsWith("Sitemap:", ignoreCase = true)) line.substringAfter(':').trim() else null
+                }.filter { it.startsWith("http://") || it.startsWith("https://") }.distinct().take(10)
+                val disallowed = lines.mapNotNull { line ->
+                    if (line.startsWith("Disallow:", ignoreCase = true)) line.substringAfter(':').trim() else null
+                }.filter(String::isNotBlank).distinct().take(12)
+                buildList {
+                    add(
+                        ReconRecord(
+                            kind = "ROBOTS_TXT",
+                            value = "robots.txt منشور: ${lines.size} توجيهاً، ${disallowed.size} مسارات Disallow ظاهرة",
+                            source = "Public robots.txt",
+                            sourceUrl = sourceUrl,
+                            confidence = 84,
+                            detail = "robots.txt يقدّم إرشادات لروبوتات الزحف ولا يفرض صلاحيات وصول ولا يثبت أن المسارات محمية."
+                        )
+                    )
+                    sitemaps.forEach { sitemap ->
+                        add(
+                            ReconRecord(
+                                kind = "SITEMAP_URL",
+                                value = sitemap,
+                                source = "Public robots.txt Sitemap directive",
+                                sourceUrl = sourceUrl,
+                                confidence = 88,
+                                detail = "رابط sitemap معلن في ملف عام؛ لم يزحف التطبيق إلى صفحاته."
+                            )
+                        )
+                    }
+                    disallowed.forEach { item ->
+                        add(
+                            ReconRecord(
+                                kind = "ROBOTS_DISALLOW",
+                                value = item,
+                                source = "Public robots.txt",
+                                sourceUrl = sourceUrl,
+                                confidence = 70,
+                                detail = "مسار مذكور كتوجيه Disallow فقط؛ هذا لا يعني وجوده أو أنه مكشوف أو محمي."
+                            )
+                        )
+                    }
+                }
+            }
+            path.endsWith("/sitemap.xml") || path.contains("sitemap") -> {
+                val urls = Regex("""(?is)<loc\b[^>]*>(.*?)</loc>""")
+                    .findAll(body)
+                    .map { decodeXmlEntities(it.groupValues[1].trim()) }
+                    .filter { it.startsWith("https://") || it.startsWith("http://") }
+                    .distinct()
+                    .take(20)
+                    .toList()
+                if (urls.isEmpty()) emptyList() else buildList {
+                    add(
+                        ReconRecord(
+                            kind = "SITEMAP_SUMMARY",
+                            value = "تم استخراج ${urls.size} روابط عامة من sitemap.xml (حد العرض 20)",
+                            source = "Public XML sitemap",
+                            sourceUrl = sourceUrl,
+                            confidence = 86,
+                            detail = "روابط منشورة علناً؛ لم يفتح التطبيق الصفحات المدرجة ولم يفحصها تلقائياً."
+                        )
+                    )
+                    urls.forEach { url ->
+                        add(
+                            ReconRecord(
+                                kind = "SITEMAP_URL",
+                                value = url,
+                                source = "Public XML sitemap",
+                                sourceUrl = sourceUrl,
+                                confidence = 84,
+                                detail = "رابط وارد في ملف sitemap العام وليس تأكيداً بأن الصفحة متاحة الآن."
+                            )
+                        )
+                    }
+                }
+            }
+            path.endsWith("security.txt") -> {
+                val fields = body.lineSequence()
+                    .map(String::trim)
+                    .filter { it.isNotBlank() && !it.startsWith("#") && ':' in it }
+                    .map { it.substringBefore(':').trim() to it.substringAfter(':').trim() }
+                    .filter { (key, value) -> key in setOf("Contact", "Expires", "Policy", "Preferred-Languages", "Canonical", "Encryption") && value.isNotBlank() }
+                    .distinct()
+                    .take(10)
+                    .toList()
+                fields.map { (key, value) ->
+                    ReconRecord(
+                        kind = "SECURITY_TXT_METADATA",
+                        value = "$key: $value",
+                        source = "Public security.txt",
+                        sourceUrl = sourceUrl,
+                        confidence = 80,
+                        detail = "بيانات إفصاح أمني نشرها مشغّل النطاق؛ تحقق من صلاحية التاريخ والرابط قبل الاعتماد عليها."
+                    )
+                }
+            }
+            else -> emptyList()
+        }
+    }
+
+    private fun decodeXmlEntities(value: String): String = value
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .trim()
 
     private suspend fun inspectHttps(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
         val endpoint = "https://$domain/"

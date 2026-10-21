@@ -373,7 +373,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
             if (profiles.isNotEmpty()) {
                 ResearchSectionHeader("نتائج مباشرة من الويب", "${profiles.size} نتيجة مفهرسة من محركات ويب متعددة")
                 profiles.forEach { profile ->
-                    PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
+                    PublicProfileCard(profile = profile, showImage = includeImages, onOpen = { uriHandler.openUri(profile.url) })
                 }
             }
             if (links.isNotEmpty()) {
@@ -451,7 +451,7 @@ private fun ModeButton(modifier: Modifier, selected: Boolean, label: String, onC
 }
 
 @Composable
-private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) {
+private fun PublicProfileCard(profile: PublicProfileResult, showImage: Boolean = true, onOpen: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
         color = WorkbenchColors.Surface,
@@ -459,7 +459,7 @@ private fun PublicProfileCard(profile: PublicProfileResult, onOpen: () -> Unit) 
         border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
     ) {
         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (!profile.imageUrl.isNullOrBlank()) {
+            if (showImage && !profile.imageUrl.isNullOrBlank()) {
                 AsyncImage(
                     model = profile.imageUrl,
                     contentDescription = "صورة من ${profile.provider}",

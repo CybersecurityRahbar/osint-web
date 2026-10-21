@@ -27,12 +27,18 @@ internal class BroadPublicSearchAdapter {
         if (terms.isEmpty()) return Outcome(emptyList(), listOf("لا توجد عبارة صالحة للبحث."), 0)
         val limit = maxResults.coerceIn(5, 40)
         val semaphore = Semaphore(8)
-        val attempts = coroutineScope {
-            terms.flatMapIndexed { index, query ->
-                providers(query, index == 0).map { provider -> async { runProvider(semaphore, provider, limit) } }
-            }.awaitAll()
+        val (attempts, images) = coroutineScope {
+            val webTask = async {
+                terms.flatMapIndexed { index, query ->
+                    providers(query, index == 0).map { provider -> async { runProvider(semaphore, provider, limit) } }
+                }.awaitAll()
+            }
+            val imageTask = async {
+                if (includeImages) searchImages(terms.first(), limit, semaphore)
+                else ImageBatch(emptyList(), emptyList())
+            }
+            webTask.await() to imageTask.await()
         }
-        val images = if (includeImages) searchImages(terms.first(), limit, semaphore) else ImageBatch(emptyList(), emptyList())
         val allWeb = attempts.flatMap { it.results }
         val merged = (allWeb + images.results).distinctBy {
             if (!it.imageUrl.isNullOrBlank()) "image:" + canonical(it.imageUrl) else canonical(it.url)

@@ -488,6 +488,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
     var domain by rememberSaveable { mutableStateOf("") }
     var includeCt by rememberSaveable { mutableStateOf(true) }
     var includeAdvanced by rememberSaveable { mutableStateOf(true) }
+    var includeActiveChecks by rememberSaveable { mutableStateOf(false) }
     var scanning by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<ScanReport?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -510,7 +511,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 Text("هدف الاستطلاع", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "أدخل نطاقاً تملكه أو لديك تصريح بفحصه. لا تنفذ هذه الوحدة فحص منافذ أو محاولات دخول.",
+                    "أدخل نطاقاً تملكه أو لديك تصريح بفحصه. الفحوص النشطة اختيارية ومحدودة؛ لا تكشف كل الأبواب الخلفية ولا تنفذ استغلالاً أو تسجيل دخول.",
                     color = WorkbenchColors.TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 19.sp
@@ -545,6 +546,20 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                         Text("RDAP والتواريخ والأرشيف وتحليل رؤوس HTTPS", fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .background(WorkbenchColors.SurfaceElevated).padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Checkbox(checked = includeActiveChecks, onCheckedChange = { includeActiveChecks = it })
+                    Column(Modifier.weight(1f)) {
+                        Text("فحوص اتصال محدودة (اختياري)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "اختبار 23 منفذاً شائعاً وفحص مؤشرات عامة لمسارات حساسة. فعّله فقط للأصول المصرح بها.",
+                            fontSize = 10.sp, color = WorkbenchColors.TextSecondary, lineHeight = 15.sp
+                        )
+                    }
+                }
                 if (error != null) {
                     Text(error.orEmpty(), color = WorkbenchColors.Red, fontSize = 12.sp)
                 }
@@ -555,7 +570,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                             error = null
                             report = null
                             try {
-                                val result = ReconEngine().scanDomain(domain, includeCt, includeAdvanced)
+                                val result = ReconEngine().scanDomain(domain, includeCt, includeAdvanced, includeActiveChecks)
                                 withContext(Dispatchers.IO) {
                                     val rootId = store.upsertEntity(result.target, "DOMAIN", "User supplied", 100)
                                     result.records.forEach { item ->
@@ -578,6 +593,10 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                             "RDAP_REGISTRAR" -> "REGISTERED_THROUGH"
                                             "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED" -> "REGISTRATION_METADATA_FOR"
                                             "HTTPS_REDIRECT" -> "REDIRECTS_TO"
+                                            "IP_GEOLOCATION" -> "GEOLOCATED_AT_APPROXIMATE"
+                                            "OPEN_TCP_PORT" -> "EXPOSES_TCP_PORT"
+                                            "POTENTIAL_SENSITIVE_EXPOSURE" -> "POTENTIAL_PUBLIC_EXPOSURE_INDICATOR"
+                                            "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY" -> "HAS_CHECK_SUMMARY"
                                             "WEB_IMAGE", "WEB_PREVIEW_IMAGE" -> "HAS_PUBLIC_IMAGE"
                                             "WEB_TITLE" -> "HAS_PAGE_TITLE"
                                             "DNS_TXT" -> "HAS_DNS_TEXT_RECORD"
@@ -586,6 +605,8 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         }
                                         val rootToNode = item.kind in setOf(
                                             "DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "HTTPS_REDIRECT",
+                                            "IP_GEOLOCATION", "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
+                                            "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY",
                                             "WEB_IMAGE", "WEB_PREVIEW_IMAGE", "WEB_TITLE", "DNS_TXT",
                                             "HTTPS_STATUS", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY",
                                             "TECH_META_GENERATOR", "SECURITY_HEADER_NOT_OBSERVED", "RDAP_REGISTRAR"

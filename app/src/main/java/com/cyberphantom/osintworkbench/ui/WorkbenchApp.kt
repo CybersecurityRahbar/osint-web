@@ -91,6 +91,7 @@ import com.cyberphantom.osintworkbench.data.RelationRow
 import com.cyberphantom.osintworkbench.data.StoreStats
 import com.cyberphantom.osintworkbench.domain.LocalIntelligenceEngine
 import com.cyberphantom.osintworkbench.domain.LocalIntelligenceInsight
+import com.cyberphantom.osintworkbench.domain.ReconRecord
 import com.cyberphantom.osintworkbench.domain.ReconEngine
 import com.cyberphantom.osintworkbench.domain.ScanReport
 import kotlinx.coroutines.Dispatchers

@@ -563,7 +563,7 @@ class ReconEngine {
                     add(
                         ReconRecord(
                             kind = "IP_GEOLOCATION",
-                            value = "$ip · $location" + (network.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
+                            value = "$ip · $location" + (network?.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""),
                             source = source,
                             sourceUrl = sourceUrl,
                             confidence = 42,

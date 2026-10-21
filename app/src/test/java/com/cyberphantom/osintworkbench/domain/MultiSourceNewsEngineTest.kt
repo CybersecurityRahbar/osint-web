@@ -93,6 +93,37 @@ class MultiSourceNewsEngineTest {
     }
 
     @Test
+    fun bingRssRedirectIsResolvedToThePublisherStoryUrl() {
+        val bingRss = """
+            <rss version="2.0"><channel><item>
+              <title>Public security update - Reuters</title>
+              <link>https://www.bing.com/news/apiclick.aspx?url=https%3A%2F%2Fwww.reuters.com%2Fworld%2Fstory&amp;aid=123</link>
+              <pubDate>Wed, 21 Oct 2026 10:00:00 GMT</pubDate>
+              <source url="https://www.reuters.com/">Reuters</source>
+            </item></channel></rss>
+        """.trimIndent()
+
+        val stories = engine.parseRss(
+            bingRss,
+            null,
+            "en",
+            "US",
+            providerLabelOverride = "Bing News RSS"
+        )
+
+        assertEquals(1, stories.size)
+        assertEquals("https://www.reuters.com/world/story", stories.single().url)
+        assertEquals("Reuters", stories.single().publisherName)
+        assertEquals("Bing News RSS", stories.single().provider)
+    }
+
+    @Test
+    fun rssProviderLabelCanDistinguishIndependentFeeds() {
+        val stories = engine.parseRss(rss, null, "en", "US", providerLabelOverride = "Bing News RSS")
+        assertEquals("Bing News RSS", stories.single().provider)
+    }
+
+    @Test
     fun rssParserDropsItemsWithoutValidHttpsStoryLinks() {
         val invalid = rss.replace(
             "https://www.reuters.com/world/example-story/",

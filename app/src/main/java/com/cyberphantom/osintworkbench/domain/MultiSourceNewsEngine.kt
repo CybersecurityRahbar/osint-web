@@ -112,28 +112,7 @@ class MultiSourceNewsEngine {
                     }
                     // A successful JSON response clears any transient failure from an earlier variant.
                     lastFailure = null
-                    val items = root.optJSONArray("articles") ?: JSONArray()
-                    val articles = buildList {
-                        for (index in 0 until items.length()) {
-                            val item = items.optJSONObject(index) ?: continue
-                            val url = item.optString("url").takeIf { it.startsWith("https://") } ?: continue
-                            val title = item.optString("title").trim().takeIf(String::isNotBlank) ?: continue
-                            val domain = item.optString("domain").removePrefix("www.")
-                            add(
-                                NewsArticle(
-                                    title = title,
-                                    url = url,
-                                    domain = domain,
-                                    publishedAt = item.optString("seendate"),
-                                    language = item.optString("language"),
-                                    sourceCountry = item.optString("sourcecountry"),
-                                    publisherName = publisherLabel(domain),
-                                    imageUrl = item.optString("socialimage").takeIf { includeImages && it.startsWith("https://") },
-                                    provider = "GDELT DOC API"
-                                )
-                            )
-                        }
-                    }.distinctBy { it.url }
+                    val articles = parseGdeltResponse(root, includeImages)
                     if (articles.isNotEmpty()) return@withContext articles
                     // Valid empty data is not a network error; try the simpler query variant.
                     break
@@ -151,6 +130,31 @@ class MultiSourceNewsEngine {
             }
         }
         emptyList()
+    }
+
+    internal fun parseGdeltResponse(root: JSONObject, includeImages: Boolean = true): List<NewsArticle> {
+        val items = root.optJSONArray("articles") ?: JSONArray()
+        return buildList {
+            for (index in 0 until items.length()) {
+                val item = items.optJSONObject(index) ?: continue
+                val url = item.optString("url").takeIf { it.startsWith("https://") } ?: continue
+                val title = item.optString("title").trim().takeIf(String::isNotBlank) ?: continue
+                val domain = item.optString("domain").removePrefix("www.")
+                add(
+                    NewsArticle(
+                        title = title,
+                        url = url,
+                        domain = domain,
+                        publishedAt = item.optString("seendate"),
+                        language = item.optString("language"),
+                        sourceCountry = item.optString("sourcecountry"),
+                        publisherName = publisherLabel(domain),
+                        imageUrl = item.optString("socialimage").takeIf { includeImages && it.startsWith("https://") },
+                        provider = "GDELT DOC API"
+                    )
+                )
+            }
+        }.distinctBy { it.url }
     }
 
     private suspend fun queryGoogleNews(

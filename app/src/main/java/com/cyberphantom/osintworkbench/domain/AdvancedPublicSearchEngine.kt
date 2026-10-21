@@ -29,9 +29,9 @@ data class PublicWebSearchResponse(
 }
 
 /**
- * In-app, public-index search. It queries DuckDuckGo's HTML/Lite result pages instead of
- * rendering a set of manually curated links. It does not authenticate to, crawl, or bypass
- * access controls on social networks. Public result availability depends on the search provider.
+ * In-app, public-index search. It retrieves and parses result pages from DuckDuckGo, Bing,
+ * Google, and Yahoo instead of returning only manually curated links. It does not authenticate to,
+ * crawl, or bypass access controls on social networks. Public result availability depends on each provider.
  */
 class AdvancedPublicSearchEngine {
     fun buildSearchQueries(rawQuery: String, kind: IdentifierKind): List<String> {

@@ -89,30 +89,62 @@ class MultiSourceNewsEngine {
     }
 
     private suspend fun queryGdelt(query: String, maxRecords: Int): List<NewsArticle> = withContext(Dispatchers.IO) {
-        val endpoint = "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=${maxRecords.coerceIn(1, 50)}"
-        val root = JSONObject(getText(endpoint, 14_000, "application/json"))
-        val items = root.optJSONArray("articles") ?: JSONArray()
-        buildList {
-            for (index in 0 until items.length()) {
-                val item = items.optJSONObject(index) ?: continue
-                val url = item.optString("url").takeIf { it.startsWith("https://") } ?: continue
-                val title = item.optString("title").trim().takeIf(String::isNotBlank) ?: continue
-                val domain = item.optString("domain").removePrefix("www.")
-                add(
-                    NewsArticle(
-                        title = title,
-                        url = url,
-                        domain = domain,
-                        publishedAt = item.optString("seendate"),
-                        language = item.optString("language"),
-                        sourceCountry = item.optString("sourcecountry"),
-                        publisherName = publisherLabel(domain),
-                        imageUrl = item.optString("socialimage").takeIf { it.startsWith("https://") },
-                        provider = "GDELT DOC API"
-                    )
-                )
+        val limit = maxRecords.coerceIn(1, 50)
+        // Retry a simpler request if the richer one returns an HTML error page or is rate-limited.
+        val endpoints = listOf(
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=ArtList&format=json&sort=DateDesc&maxrecords=$limit&timespan=7d",
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=ArtList&format=json&maxrecords=${minOf(limit, 20)}"
+        )
+        var lastFailure: Exception? = null
+        for ((endpointIndex, endpoint) in endpoints.withIndex()) {
+            for (attempt in 0..2) {
+                try {
+                    val raw = getText(endpoint, 12_000, "application/json, text/plain, */*")
+                    val root = try {
+                        JSONObject(raw)
+                    } catch (error: Exception) {
+                        val preview = raw.replace(Regex("\\s+"), " ").take(180)
+                        throw IllegalStateException("GDELT returned non-JSON data: $preview", error)
+                    }
+                    val items = root.optJSONArray("articles") ?: JSONArray()
+                    val articles = buildList {
+                        for (index in 0 until items.length()) {
+                            val item = items.optJSONObject(index) ?: continue
+                            val url = item.optString("url").takeIf { it.startsWith("https://") } ?: continue
+                            val title = item.optString("title").trim().takeIf(String::isNotBlank) ?: continue
+                            val domain = item.optString("domain").removePrefix("www.")
+                            add(
+                                NewsArticle(
+                                    title = title,
+                                    url = url,
+                                    domain = domain,
+                                    publishedAt = item.optString("seendate"),
+                                    language = item.optString("language"),
+                                    sourceCountry = item.optString("sourcecountry"),
+                                    publisherName = publisherLabel(domain),
+                                    imageUrl = item.optString("socialimage").takeIf { it.startsWith("https://") },
+                                    provider = "GDELT DOC API"
+                                )
+                            )
+                        }
+                    }.distinctBy { it.url }
+                    if (articles.isNotEmpty()) return@withContext articles
+                    // Valid empty data is not a network error; try the simpler query variant.
+                    break
+                } catch (error: Exception) {
+                    lastFailure = error
+                    val message = error.message.orEmpty()
+                    val retryable = listOf("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "timed out", "timeout")
+                        .any { message.contains(it, ignoreCase = true) }
+                    if (!retryable || attempt == 2) break
+                    Thread.sleep(if (attempt == 0) 350L else 850L)
+                }
+            }
+            if (endpointIndex == endpoints.lastIndex && lastFailure != null) {
+                throw IllegalStateException("GDELT DOC API failed after retries: " + (lastFailure?.message ?: "unknown error"), lastFailure)
             }
         }
+        emptyList()
     }
 
     private suspend fun queryGoogleNews(
@@ -264,15 +296,27 @@ class MultiSourceNewsEngine {
             instanceFollowRedirects = true
             useCaches = false
             setRequestProperty("Accept", accept)
-            setRequestProperty("User-Agent", "OSINT-Workbench/0.3 (public research app)")
+            setRequestProperty("User-Agent", "OSINTWorkbench/0.4 (public-source research; see project README)")
         }
         try {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.use { input ->
-                BufferedReader(InputStreamReader(input, StandardCharsets.UTF_8)).use { it.readText() }
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(8_192)
+                var total = 0
+                while (total < 512_000) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, 512_000 - total))
+                    if (count <= 0) break
+                    out.write(buffer, 0, count)
+                    total += count
+                }
+                out.toString(StandardCharsets.UTF_8.name())
             }.orEmpty()
-            if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
+            if (status !in 200..299) {
+                val preview = body.replace(Regex("\\s+"), " ").take(160)
+                throw IllegalStateException("HTTP $status from ${URL(endpoint).host}" + if (preview.isBlank()) "" else " · $preview")
+            }
             if (body.isBlank()) throw IllegalStateException("Empty response from ${URL(endpoint).host}")
             return body
         } finally {

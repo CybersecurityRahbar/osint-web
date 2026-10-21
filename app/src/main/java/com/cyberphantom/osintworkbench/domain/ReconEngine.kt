@@ -162,13 +162,19 @@ class ReconEngine {
                 .getOrDefault(emptyList())
         } else emptyList()
 
+        val subdomainAddressResults = if (includeCertificateTransparency) {
+            runCatching { resolveCertificateSubdomains(certificateResults) }
+                .onFailure { warnings += "تحقق DNS للأسماء الفرعية: ${it.message ?: "تعذر إكمال التحقق"}" }
+                .getOrDefault(emptyList())
+        } else emptyList()
+
         val activeResults = if (includeActiveChecks) {
             runCatching { runLimitedActiveChecks(domain) }
                 .onFailure { warnings += "الفحوص النشطة المحدودة: ${it.message ?: "تعذر إكمال فحص الاتصال"}" }
                 .getOrDefault(emptyList())
         } else emptyList()
 
-        val records = (dnsResults + geoResults + extraResults + certificateResults + activeResults)
+        val records = (dnsResults + geoResults + extraResults + certificateResults + subdomainAddressResults + activeResults)
             .distinctBy { "${it.kind}|${it.value.lowercase(Locale.ROOT)}" }
 
         return ScanReport(
@@ -258,6 +264,55 @@ class ReconEngine {
                 confidence = 84,
                 detail = "اسم ظاهر في بيانات شهادات عامة؛ لا يثبت أن الخدمة نشطة حالياً."
             )
+        }
+    }
+
+    private suspend fun resolveCertificateSubdomains(certificateRecords: List<ReconRecord>): List<ReconRecord> = withContext(Dispatchers.IO) {
+        val hosts = certificateRecords.asSequence()
+            .filter { it.kind == "SUBDOMAIN" }
+            .map { it.value.trim().lowercase(Locale.ROOT) }
+            .filter { DomainTools.isValidDomain(it) }
+            .distinct()
+            .take(6)
+            .toList()
+        coroutineScope {
+            hosts.map { host ->
+                async(Dispatchers.IO) {
+                    val addresses = runCatching { queryDns(host, DnsQuery("A", 1)) }
+                    when {
+                        addresses.isFailure -> listOf(
+                            ReconRecord(
+                                kind = "SUBDOMAIN_DNS_STATUS",
+                                value = "$host · تعذر تأكيد سجل A",
+                                source = "Public DNS cross-check",
+                                sourceUrl = "https://dns.google/resolve?name=${enc(host)}&type=A",
+                                confidence = 25,
+                                detail = "ظهر الاسم في بيانات شهادة عامة، لكن تعذر تأكيد أنه يحل إلى عنوان IPv4 حالياً."
+                            )
+                        )
+                        addresses.getOrNull().orEmpty().isEmpty() -> listOf(
+                            ReconRecord(
+                                kind = "SUBDOMAIN_DNS_STATUS",
+                                value = "$host · لم يُرجع سجل A عنواناً",
+                                source = "Public DNS cross-check",
+                                sourceUrl = "https://dns.google/resolve?name=${enc(host)}&type=A",
+                                confidence = 35,
+                                detail = "اسم من شهادة عامة لا يظهر له سجل A في هذا الاستعلام؛ قد يملك IPv6 فقط أو يكون قديماً."
+                            )
+                        )
+                        else -> addresses.getOrDefault(emptyList()).map { address ->
+                            ReconRecord(
+                                kind = "SUBDOMAIN_ADDRESS",
+                                value = "$host → ${address.value}",
+                                source = "DNS answer for $host · ${address.source}",
+                                sourceUrl = address.sourceUrl,
+                                confidence = address.confidence,
+                                detail = "تم تأكيد عنوان IPv4 للاسم الفرعي عبر DNS عام. هذا لا يثبت أن الاسم تابع إدارياً إلى الجهة نفسها أو أن الخادم مخصص له."
+                            )
+                        }
+                    }
+                }
+            }.awaitAll().flatten()
         }
     }
 

@@ -327,6 +327,18 @@ class AdvancedPublicSearchEngine {
             }
         }
 
+        // Yahoo and some regional search frontends put an anchor inside an h3.
+        if (candidates.isEmpty()) {
+            val h3Links = Regex("""(?is)<h3\b[^>]*>.*?<a\b([^>]*)>(.*?)</a>.*?</h3>""").findAll(html)
+            for (heading in h3Links) {
+                val href = Regex("""(?is)\bhref\s*=\s*["']([^"']+)["']""")
+                    .find(heading.groupValues[1])?.groupValues?.getOrNull(1) ?: continue
+                val title = cleanHtml(heading.groupValues[2])
+                if (title.isNotBlank()) candidates += Triple(href, title, "")
+                if (candidates.size >= limit) break
+            }
+        }
+
         // Google results wrap external links around h3 headings instead of h2 elements.
         if (candidates.isEmpty()) {
             val headingAnchors = Regex("""(?is)<a\b([^>]*)>(.*?)</a>""").findAll(html)
@@ -358,7 +370,7 @@ class AdvancedPublicSearchEngine {
     }
 
     private suspend fun searchWikimediaImages(query: String, limit: Int): List<PublicProfileResult> = withContext(Dispatchers.IO) {
-        val endpoint = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${enc(query)}&gsrnamespace=6&gsrlimit=${limit.coerceIn(1, 12)}&prop=imageinfo&iiprop=url&iiurlwidth=560&format=json"
+        val endpoint = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${enc(query)}&gsrnamespace=6&gsrlimit=${limit.coerceIn(1, 12)}&prop=info%7Cimageinfo&inprop=url&iiprop=url&iiurlwidth=560&format=json"
         val root = JSONObject(fetchPublicApi(endpoint, "application/json", 8_000))
         val pages = root.optJSONObject("query")?.optJSONObject("pages") ?: JSONObject()
         val keys = pages.keys()

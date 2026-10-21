@@ -12,6 +12,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Base64
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
@@ -321,6 +322,7 @@ internal class BroadPublicSearchAdapter {
                 h.endsWith("duckduckgo.com") -> params["uddg"]
                 h.startsWith("google.") || (h.contains(".google.") && uri.path == "/url") -> params["q"] ?: params["url"]
                 h == "r.search.yahoo.com" || h == "search.yahoo.com" -> params["url"] ?: params["u"] ?: params["RU"]
+                h == "bing.com" || h.endsWith(".bing.com") -> params["u"]?.let { unwrapBingClick(it) }
                 else -> null
             }
             val target = encoded?.let { java.net.URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
@@ -332,6 +334,17 @@ internal class BroadPublicSearchAdapter {
                 finalHost == "bing.com" || finalHost.endsWith(".bing.com") ||
                 finalHost == "search.yahoo.com" || finalHost == "r.search.yahoo.com") return@runCatching null
             finalUrl
+        }.getOrNull()
+    }
+
+    private fun unwrapBingClick(raw: String): String? {
+        // Bing click URLs often encode the destination in a1 + base64url.
+        val encoded = raw.removePrefix("a1")
+        if (encoded.startsWith("https://") || encoded.startsWith("http://")) return encoded
+        return runCatching {
+            val padded = encoded + "=".repeat((4 - encoded.length % 4) % 4)
+            String(Base64.getUrlDecoder().decode(padded), StandardCharsets.UTF_8)
+                .takeIf { it.startsWith("https://") || it.startsWith("http://") }
         }.getOrNull()
     }
 

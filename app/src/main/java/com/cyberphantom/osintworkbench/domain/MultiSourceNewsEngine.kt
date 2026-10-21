@@ -108,16 +108,21 @@ class MultiSourceNewsEngine {
 
     private suspend fun queryGdelt(query: String, maxRecords: Int, includeImages: Boolean): List<NewsArticle> = withContext(Dispatchers.IO) {
         val limit = maxRecords.coerceIn(1, 50)
-        // Retry a simpler request if the richer one returns an HTML error page or is rate-limited.
+        val cleanQuery = query.trim().replace(Regex("\\s+"), " ")
+        // GDELT requires OR groups to be parenthesized; ungrouped user text can return HTTP 200 HTML errors.
+        val apiQuery = if (Regex("(?i)\\\\bOR\\\\b").containsMatchIn(cleanQuery) &&
+            !cleanQuery.trim().startsWith("(")) "($cleanQuery)" else cleanQuery
+        // First query is a fast recent-news request; the fallback widens the period and lowers the cap.
         val endpoints = listOf(
-            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=$limit&timespan=1week",
-            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(query)}&mode=artlist&format=json&maxrecords=${minOf(limit, 20)}"
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(apiQuery)}&mode=artlist&format=json&sort=datedesc&maxrecords=$limit&timespan=1week",
+            "https://api.gdeltproject.org/api/v2/doc/doc?query=${enc(apiQuery)}&mode=artlist&format=json&maxrecords=${minOf(limit, 20)}"
         )
         var lastFailure: Exception? = null
         for ((endpointIndex, endpoint) in endpoints.withIndex()) {
-            for (attempt in 0..2) {
+            val maxAttempts = if (endpointIndex == 0) 2 else 1
+            for (attempt in 0 until maxAttempts) {
                 try {
-                    val raw = getText(endpoint, 12_000, "application/json, text/plain, */*")
+                    val raw = getText(endpoint, 8_000, "application/json, text/plain, */*")
                     val root = try {
                         JSONObject(raw)
                     } catch (error: Exception) {
@@ -135,8 +140,9 @@ class MultiSourceNewsEngine {
                     val message = error.message.orEmpty()
                     val retryable = listOf("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "timed out", "timeout")
                         .any { message.contains(it, ignoreCase = true) }
-                    if (!retryable || attempt == 2) break
-                    Thread.sleep(if (attempt == 0) 350L else 850L)
+                    if (!retryable || attempt == maxAttempts - 1) break
+                    // Respect transient rate limits; short tight retry loops tend to worsen HTTP 429/503 responses.
+                    Thread.sleep(2_500L)
                 }
             }
             if (endpointIndex == endpoints.lastIndex && lastFailure != null) {

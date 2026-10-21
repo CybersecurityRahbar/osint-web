@@ -39,8 +39,11 @@ class AdvancedPublicSearchEngine {
         return when (kind) {
             IdentifierKind.NAME -> listOf(
                 query,
+                "\"$query\"",
                 "\"$query\" site:reddit.com",
-                "\"$query\" (site:news.ycombinator.com OR site:medium.com)"
+                "\"$query\" (site:news.ycombinator.com OR site:medium.com)",
+                "\"$query\" (site:github.com OR site:gitlab.com OR site:stackoverflow.com)",
+                "\"$query\" (site:linkedin.com OR site:instagram.com OR site:facebook.com OR site:tiktok.com OR site:x.com)"
             )
             IdentifierKind.USERNAME -> {
                 val username = query.removePrefix("@")
@@ -51,7 +54,8 @@ class AdvancedPublicSearchEngine {
                     "\"$username\"",
                     "\"$username\" site:reddit.com",
                     "\"$username\" (site:github.com OR site:gitlab.com)",
-                    "\"$username\" (site:youtube.com OR site:x.com)"
+                    "\"$username\" (site:youtube.com OR site:x.com)",
+                    "\"$username\" (site:stackoverflow.com OR site:medium.com OR site:dev.to)"
                 )
             }
             IdentifierKind.PHONE -> {
@@ -73,7 +77,8 @@ class AdvancedPublicSearchEngine {
                 listOf(
                     "\"$query\"",
                     "\"$query\" site:reddit.com",
-                    "\"$query\" (site:github.com OR site:gitlab.com)"
+                    "\"$query\" (site:github.com OR site:gitlab.com)",
+                    "\"$query\" (site:pastebin.com OR site:stackoverflow.com OR site:medium.com)"
                 )
             }
         }.distinct()
@@ -172,7 +177,7 @@ class AdvancedPublicSearchEngine {
 
         val warnings = buildList {
             outcomes.filter { it.error != null }.take(5).forEach { failed ->
-                add("\${failed.provider}: تعذر جلب «\${failed.query}»: \${failed.error}")
+                add("${failed.provider}: تعذر جلب «${failed.query}»: ${failed.error}")
             }
             if (includeImages && imageError != null) add("بحث الصور: $imageError")
             if (includeImages && imageResults.isEmpty() && imageError == null) {
@@ -242,8 +247,8 @@ class AdvancedPublicSearchEngine {
                 }
                 out.toString(StandardCharsets.UTF_8.name())
             }.orEmpty()
-            if (status !in 200..299) throw IllegalStateException("HTTP $status from \${URL(endpoint).host}")
-            if (body.isBlank()) throw IllegalStateException("استجابة فارغة من \${URL(endpoint).host}")
+            if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
+            if (body.isBlank()) throw IllegalStateException("استجابة فارغة من ${URL(endpoint).host}")
             if (body.contains("anomaly-modal", ignoreCase = true) || body.contains("bot challenge", ignoreCase = true)) {
                 throw IllegalStateException("أعاد مزود البحث تحدي وصول بدلاً من النتائج")
             }
@@ -310,7 +315,7 @@ class AdvancedPublicSearchEngine {
             if (host.isBlank() || blockedHosts.any { host == it || host.endsWith(".$it") }) return@mapNotNull null
             if (title.length < 3 || title.equals("cached", true) || title.equals("translate", true)) return@mapNotNull null
             PublicProfileResult(
-                provider = "$provider · \${displayHost(host)}",
+                provider = "$provider · ${displayHost(host)}",
                 title = title.take(240),
                 description = snippet.ifBlank { "نتيجة ويب عامة مفهرسة · افتح المصدر للتحقق من النص والسياق." }.take(500),
                 url = url,
@@ -320,7 +325,7 @@ class AdvancedPublicSearchEngine {
     }
 
     private suspend fun searchWikimediaImages(query: String, limit: Int): List<PublicProfileResult> = withContext(Dispatchers.IO) {
-        val endpoint = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=\${enc(query)}&gsrnamespace=6&gsrlimit=\${limit.coerceIn(1, 12)}&prop=imageinfo&iiprop=url&iiurlwidth=560&format=json"
+        val endpoint = "https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${enc(query)}&gsrnamespace=6&gsrlimit=${limit.coerceIn(1, 12)}&prop=imageinfo&iiprop=url&iiurlwidth=560&format=json"
         val root = JSONObject(fetchPublicApi(endpoint, "application/json", 8_000))
         val pages = root.optJSONObject("query")?.optJSONObject("pages") ?: JSONObject()
         val keys = pages.keys()
@@ -329,7 +334,7 @@ class AdvancedPublicSearchEngine {
                 val page = pages.optJSONObject(keys.next()) ?: continue
                 val title = page.optString("title").removePrefix("File:").ifBlank { continue }
                 val pageUrl = page.optString("fullurl").takeIf { it.startsWith("https://") }
-                    ?: "https://commons.wikimedia.org/wiki/\${enc("File:$title")}"
+                    ?: "https://commons.wikimedia.org/wiki/${enc("File:$title")}"
                 val imageInfo = page.optJSONArray("imageinfo")?.optJSONObject(0) ?: continue
                 val imageUrl = imageInfo.optString("thumburl").ifBlank { imageInfo.optString("url") }
                     .takeIf { it.startsWith("https://") } ?: continue
@@ -362,8 +367,8 @@ class AdvancedPublicSearchEngine {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.use { it.bufferedReader(StandardCharsets.UTF_8).readText() }.orEmpty()
-            if (status !in 200..299) throw IllegalStateException("HTTP $status from \${URL(endpoint).host}")
-            if (body.isBlank()) throw IllegalStateException("استجابة فارغة من \${URL(endpoint).host}")
+            if (status !in 200..299) throw IllegalStateException("HTTP $status from ${URL(endpoint).host}")
+            if (body.isBlank()) throw IllegalStateException("استجابة فارغة من ${URL(endpoint).host}")
             return body
         } finally {
             connection.disconnect()

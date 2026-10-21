@@ -39,7 +39,12 @@ internal class BroadPublicSearchAdapter {
             }
             webTask.await() to imageTask.await()
         }
-        val allWeb = attempts.flatMap { it.results }.distinctBy { canonical(it.url) }
+        val allWeb = buildList {
+            val maxRows = attempts.maxOfOrNull { it.results.size } ?: 0
+            for (row in 0 until maxRows) {
+                attempts.forEach { attempt -> attempt.results.getOrNull(row)?.let(::add) }
+            }
+        }.distinctBy { canonical(it.url) }
         val distinctImages = images.results.distinctBy { canonical(it.imageUrl ?: it.url) }
         // Reserve visible slots for images; otherwise a large web result list can push every image off-screen.
         val imageLimit = minOf(distinctImages.size, if (includeImages) maxOf(3, limit / 3) else 0)

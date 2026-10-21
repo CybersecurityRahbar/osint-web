@@ -291,30 +291,90 @@ class ReconEngine {
     }
 
     private suspend fun queryWayback(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
-        val endpoint = "https://web.archive.org/cdx/search/cdx?url=${enc(domain)}&matchType=domain&output=json&fl=timestamp,original,statuscode&filter=statuscode:200&collapse=timestamp:4&limit=24"
+        // Reverse time order and collapse by URL so the first results represent newer captures
+        // across different pages instead of returning only the oldest captures.
+        val endpoint = "https://web.archive.org/cdx/search/cdx?url=${enc(domain)}&matchType=domain&output=json&fl=timestamp,original,statuscode,mimetype&filter=statuscode:200&filter=mimetype:text/html&collapse=urlkey&sort=reverse&limit=18"
         val json = JSONArray(getText(endpoint, timeoutMs = 12_000))
-        val result = mutableListOf<ReconRecord>()
+        val captures = mutableListOf<ArchiveCapture>()
         for (i in 0 until json.length()) {
             val row = json.optJSONArray(i) ?: continue
-            // The first JSON row is usually the requested column names.
             if (row.length() < 3 || row.optString(0).equals("timestamp", true)) continue
             val timestamp = row.optString(0)
             val original = row.optString(1)
             val statusCode = row.optString(2)
             if (timestamp.length >= 8 && original.startsWith("http")) {
-                val date = timestamp.take(4) + "-" + timestamp.substring(4, 6) + "-" + timestamp.substring(6, 8)
-                result += ReconRecord(
-                    "WAYBACK_SNAPSHOT",
-                    "$date · $original",
-                    "Internet Archive Wayback Machine",
-                    endpoint,
-                    88,
-                    "لقطة مؤرشفة، وليست دليلاً على أن الصفحة ما زالت موجودة الآن. HTTP archive status: $statusCode"
-                )
+                captures += ArchiveCapture(timestamp, original, statusCode)
             }
         }
-        result
+
+        // Only fetch previews for the newest few pages to keep the phone's data/battery use bounded.
+        val previews = coroutineScope {
+            captures.take(4).map { capture ->
+                async { capture.original to runCatching { extractPreviewImage(capture.timestamp, capture.original) }.getOrNull() }
+            }.awaitAll().toMap()
+        }
+        captures.map { capture ->
+            val date = capture.timestamp.take(4) + "-" + capture.timestamp.substring(4, 6) + "-" + capture.timestamp.substring(6, 8)
+            val snapshotUrl = "https://web.archive.org/web/${capture.timestamp}/${capture.original}"
+            ReconRecord(
+                kind = "WAYBACK_SNAPSHOT",
+                value = "$date · ${capture.original}",
+                source = "Internet Archive Wayback Machine",
+                sourceUrl = snapshotUrl,
+                confidence = 90,
+                detail = "لقطة HTML مؤرشفة. قد لا تعمل كل الموارد المضمّنة، ولا تثبت اللقطة أن الصفحة نشطة الآن. حالة الأرشيف: ${capture.statusCode}. فهرس اللقطات: $endpoint",
+                previewImageUrl = previews[capture.original]
+            )
+        }
     }
+
+    private suspend fun extractPreviewImage(timestamp: String, originalUrl: String): String? = withContext(Dispatchers.IO) {
+        val snapshotUrl = "https://web.archive.org/web/${timestamp}/${originalUrl}"
+        val connection = (URL(snapshotUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 5_000
+            readTimeout = 6_000
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Range", "bytes=0-98303")
+            setRequestProperty("Accept", "text/html,application/xhtml+xml")
+            setRequestProperty("User-Agent", "OSINT-Workbench/0.3 (public archive preview)")
+        }
+        try {
+            val status = connection.responseCode
+            if (status !in 200..399) return@withContext null
+            val stream = if (status in 200..399) connection.inputStream else connection.errorStream
+            val html = stream?.use { input ->
+                val out = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(4096)
+                var total = 0
+                while (total < 98_304) {
+                    val read = input.read(buffer, 0, minOf(buffer.size, 98_304 - total))
+                    if (read <= 0) break
+                    out.write(buffer, 0, read)
+                    total += read
+                }
+                out.toString(StandardCharsets.UTF_8.name())
+            }.orEmpty()
+            val metaTags = Regex("(?is)<meta\\b[^>]*>").findAll(html).map { it.value }
+            val imageValue = metaTags.firstNotNullOfOrNull { tag ->
+                val property = Regex("""(?is)\\b(?:property|name)\\s*=\\s*["']([^"']+)["']""")
+                    .find(tag)?.groupValues?.getOrNull(1).orEmpty()
+                if (!property.equals("og:image", true) && !property.equals("twitter:image", true)) return@firstNotNullOfOrNull null
+                Regex("""(?is)\\bcontent\\s*=\\s*["']([^"']+)["']""")
+                    .find(tag)?.groupValues?.getOrNull(1)?.trim()
+            } ?: return@withContext null
+            val resolved = URL(URL(originalUrl), imageValue).toString()
+            resolved.takeIf { it.startsWith("https://") && it.length <= 2_048 }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private data class ArchiveCapture(
+        val timestamp: String,
+        val original: String,
+        val statusCode: String
+    )
 
     private suspend fun inspectHttps(domain: String): List<ReconRecord> = withContext(Dispatchers.IO) {
         val endpoint = "https://$domain/"

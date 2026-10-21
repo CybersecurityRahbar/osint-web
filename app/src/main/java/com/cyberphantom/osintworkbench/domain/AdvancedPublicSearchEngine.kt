@@ -383,7 +383,8 @@ class AdvancedPublicSearchEngine {
         buildList {
             while (keys.hasNext() && size < limit) {
                 val page = pages.optJSONObject(keys.next()) ?: continue
-                val title = page.optString("title").removePrefix("File:").ifBlank { continue }
+                val title = page.optString("title").removePrefix("File:")
+                if (title.isBlank()) continue
                 val pageUrl = page.optString("fullurl").takeIf { it.startsWith("https://") }
                     ?: "https://commons.wikimedia.org/wiki/${enc("File:$title")}"
                 val imageInfo = page.optJSONArray("imageinfo")?.optJSONObject(0) ?: continue

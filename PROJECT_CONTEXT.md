@@ -595,3 +595,14 @@
 - لتفادي التعارض مع أي نسخة Preview موجودة، تم تحديث Debug suffix في `app/build.gradle.kts` إلى `.preview050`، بحيث يصبح معرّف هذه النسخة `com.cyberphantom.osintworkbench.preview050` واسمها `OSINT Workbench Preview 0.5`. هذا لا يغير معرّف النسخة الأصلية `com.cyberphantom.osintworkbench` ولا يمس قاعدة بياناتها.
 - تم تحديث `README.md` وWorkflow `.github/workflows/android.yml` لتوضيح أن الـ artifact ZIP يحتوي `app-debug.apk`، ولإضافة ملخص تثبيت في GitHub Actions ولتسمية artifact الجديد `osint-workbench-v0.5-preview-apk`.
 - **الحالة بعد هذه التغييرات:** يجب انتظار/فحص تشغيل Android CI الناتج من آخر commit `e86491bd7b71c434569a97baf74bfc46f9a9cf3d`. لا تسلَّم APK v0.5 ذي المعرّف الجديد قبل نجاح الاختبارات والبناء ورفع artifact والتحقق من manifest وZIP. ملف `ALKASER_OSINT.py` بقي مرجعاً فقط ولم يتم تعديله.
+
+
+### نتيجة CI النهائية بعد إصلاح التثبيت — 2026-10-21
+- اكتمل تشغيل Android CI رقم `39671719126` على `main`، commit `2fef12aee05ed36d52b8e642bd5c65acf8c88c8b`، بالنتيجة `success`.
+- نجحت على وجه التحديد خطوات `Run unit tests` و`Build debug APK` و`Upload debug APK` و`Explain APK download and installation`.
+- artifact الحالي: `osint-workbench-v0.5-preview-apk`، ID `12380656241`، run `39671719126`. تنزيل Actions نفسه ZIP، لذلك جرى استخلاص `app-debug.apk` منه وفحص ZIP الخارجي والداخلي دون أخطاء.
+- APK المستخلص حجمه 20,073,xxx bytes تقريباً، SHA-256: `3317ab23ba980083cb7971a31546f623195cb25e192c8f25d12e22db1f3d6864`.
+- فُحص AndroidManifest داخل APK فعلياً: `versionName=0.5.0-preview`، `versionCode=5`، `applicationId=com.cyberphantom.osintworkbench.preview050`، `minSdk=26`، `targetSdk=36`، واسم التطبيق `OSINT Workbench Preview 0.5`. كما عُثر على APK signing block؛ فحص الملف البنيوي لا يعادل اختبار التثبيت على جهاز مادي.
+- أنشئت نسخة APK مباشرة من artifact للتحميل الفردي داخل مخرجات المحادثة. هذا يتجاوز ضرورة استخراج ZIP يدوياً على هاتف المستخدم.
+- ملف `ALKASER_OSINT.py` لم يُعدّل. تغيير package suffix يخص Debug Preview فقط ولا يغير application ID الأصلي.
+- المتبقي: لم أستطع تثبيت التطبيق على هاتف فعلي من بيئة البناء هذه؛ على المستخدم تجربة ملف APK المباشر. إذا استمر فشل التثبيت، يجب تسجيل نص رسالة Android installer كما هي؛ فهذا يحدد هل السبب سياسة تثبيت APK أو نظام الجهاز، بدلاً من التخمين.

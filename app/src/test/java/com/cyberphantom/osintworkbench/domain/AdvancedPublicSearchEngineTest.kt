@@ -1,5 +1,6 @@
 package com.cyberphantom.osintworkbench.domain
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -63,6 +64,51 @@ class AdvancedPublicSearchEngineTest {
             engine.calculateRelevance("Ada Lovelace", IdentifierKind.NAME, exact) >
                 engine.calculateRelevance("Ada Lovelace", IdentifierKind.NAME, partial)
         )
+    }
+
+    @Test
+    fun parsesDuckDuckGoExternalResultsAndUnwrapsDestinations() {
+        val html = """
+            <div class="result results_links results_links_deep">
+              <a class="result__a" href="https://example.org/research">Public research page</a>
+              <a class="result__snippet">A useful public record about research.</a>
+            </div>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "DDG test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public research page", results.single().title)
+        assertEquals("https://example.org/research", results.single().url)
+        assertTrue(results.single().description.contains("useful public record"))
+        assertTrue(results.single().provider.startsWith("DDG test"))
+    }
+
+    @Test
+    fun parsesBingResultBlocksWhenDuckDuckGoMarkupIsAbsent() {
+        val html = """
+            <ol id="b_results">
+              <li class="b_algo">
+                <h2><a href="https://example.net/profile">Public profile result</a></h2>
+                <div class="b_caption"><p>Publicly indexed profile description.</p></div>
+              </li>
+            </ol>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Bing test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public profile result", results.single().title)
+        assertEquals("https://example.net/profile", results.single().url)
+        assertTrue(results.single().description.contains("indexed profile"))
+    }
+
+    @Test
+    fun expandedNameSearchIncludesSeveralPublicIndexSurfaces() {
+        val queries = engine.buildSearchQueries("Ada Lovelace", IdentifierKind.NAME)
+        assertTrue(queries.any { it.contains("reddit.com") })
+        assertTrue(queries.any { it.contains("github.com") })
+        assertTrue(queries.any { it.contains("instagram.com") || it.contains("tiktok.com") })
     }
 
     @Test

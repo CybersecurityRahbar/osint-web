@@ -592,6 +592,8 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                             "SUBDOMAIN_ADDRESS" -> "SUBDOMAIN_RESOLVES_TO"
                                             "SUBDOMAIN_DNS_STATUS" -> "SUBDOMAIN_DNS_LOOKUP_STATUS"
                                             "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
+                                            "WAYBACK_IMAGE" -> "ARCHIVED_PUBLIC_IMAGE_OF"
+                                            "PUBLIC_WEB_RESULT" -> "LISTED_IN_PUBLIC_WEB_INDEX"
                                             "WAYBACK_STATUS" -> "ARCHIVE_LOOKUP_STATUS"
                                             "ROBOTS_TXT" -> "HAS_ROBOTS_POLICY"
                                             "ROBOTS_DISALLOW" -> "MENTIONS_CRAWLER_PATH"
@@ -614,7 +616,8 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         }
                                         val rootToNode = item.kind in setOf(
                                             "DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "HTTPS_REDIRECT",
-                                            "WAYBACK_STATUS", "IP_GEOLOCATION", "IP_GEOLOCATION_UNAVAILABLE",
+                                            "WAYBACK_STATUS", "WAYBACK_IMAGE", "PUBLIC_WEB_RESULT",
+                                            "IP_GEOLOCATION", "IP_GEOLOCATION_UNAVAILABLE",
                                             "ROBOTS_TXT", "ROBOTS_DISALLOW", "SITEMAP_SUMMARY", "SITEMAP_URL",
                                             "SECURITY_TXT_METADATA", "SUBDOMAIN_ADDRESS", "SUBDOMAIN_DNS_STATUS",
                                             "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
@@ -1021,6 +1024,8 @@ private fun relationDescription(relation: String): String = when (relation) {
     "USES_MAIL_EXCHANGE" -> "سجل MX يحدد خادم بريد"
     "SUBDOMAIN_OF" -> "اسم نطاق فرعي مكتشف من مصدر عام"
     "ARCHIVED_VERSION_OF" -> "لقطة مؤرشفة لهذا العنوان"
+    "ARCHIVED_PUBLIC_IMAGE_OF" -> "صورة عامة التُقطت في الأرشيف"
+    "LISTED_IN_PUBLIC_WEB_INDEX" -> "صفحة ظهرت في فهرس ويب عام"
     "REGISTERED_THROUGH" -> "سجل RDAP يذكر جهة التسجيل"
     "REGISTRATION_METADATA_FOR" -> "بيانات تسجيل RDAP للنطاق"
     "REDIRECTS_TO" -> "استجابة HTTPS أعادت التوجيه إلى العنوان"

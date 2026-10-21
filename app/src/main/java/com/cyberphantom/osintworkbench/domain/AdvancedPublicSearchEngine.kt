@@ -117,97 +117,71 @@ class AdvancedPublicSearchEngine {
     suspend fun search(
         rawQuery: String,
         kind: IdentifierKind,
-        maxResults: Int = 24,
-        includeImages: Boolean = false
+        maxResults: Int = 30,
+        includeImages: Boolean = true
     ): PublicWebSearchResponse {
         val query = rawQuery.trim()
-        val searchQueries = buildSearchQueries(query, kind).take(6)
+        val allQueries = buildSearchQueries(query, kind)
+        // A small number of deliberately different queries avoids repeatedly asking the
+        // exact same phrase while still covering the common dork variants.
+        val queryIndexes = when (kind) {
+            IdentifierKind.NAME -> listOf(0, 5)
+            IdentifierKind.USERNAME -> listOf(0, 2)
+            IdentifierKind.PHONE -> if (allQueries.size > 2) listOf(0, 2) else listOf(0, 1)
+            IdentifierKind.EMAIL -> listOf(0, 1)
+        }
+        val queries = queryIndexes.mapNotNull { allQueries.getOrNull(it) }.distinct()
         val limit = maxResults.coerceIn(5, 40)
 
-        // Use multiple public search frontends instead of trusting a single HTML template.
-        // The primary query is sent to four providers; expanded queries use two. This is
-        // intentionally bounded to avoid hammering public services from a mobile device.
-        val batch = coroutineScope {
-            // Use several engines without flooding public endpoints from a mobile device.
-            val sourceSemaphore = Semaphore(4)
-            val searchTasks = searchQueries.flatMapIndexed { index, searchQuery ->
-                endpointsForQuery(searchQuery, primary = index == 0).map { endpoint ->
-                    async {
-                        sourceSemaphore.acquire()
-                        try {
-                            try {
-                                SearchAttempt(
-                                    index, searchQuery, endpoint.provider,
-                                    searchProvider(endpoint, minOf(12, limit)), null
-                                )
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Exception) {
-                                SearchAttempt(index, searchQuery, endpoint.provider, emptyList(), error.message ?: "تعذر الوصول")
-                            }
-                        } finally {
-                            sourceSemaphore.release()
-                        }
-                    }
-                }
-            }
-            val imageTask = async {
-                if (includeImages) {
-                    runCatching { searchWikimediaImages(query, minOf(10, limit)) }
-                        .fold({ it to null }, { emptyList<PublicProfileResult>() to (it.message ?: "تعذر جلب الصور") })
-                } else emptyList<PublicProfileResult>() to null
-            }
-            searchTasks.awaitAll() to imageTask.await()
+        val broadOutcome = try {
+            BroadPublicSearchAdapter().search(queries, limit, includeImages)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            BroadPublicSearchAdapter.Outcome(
+                emptyList(),
+                listOf("محركات البحث متعددة المصادر: ${error.message ?: "تعذر إكمال الطلب"}"),
+                0
+            )
         }
-        val outcomes = batch.first
-        val imageResults = batch.second.first
-        val imageError = batch.second.second
 
-        val indexedResults = outcomes
-            .flatMap { attempt ->
-                attempt.results.map { result ->
-                    result.copy(relevanceScore = calculateRelevance(query, kind, result, attempt.index))
-                }
+        val baseResults = broadOutcome.results.map { result ->
+            if (!result.imageUrl.isNullOrBlank()) {
+                result.copy(relevanceScore = maxOf(result.relevanceScore, 45))
+            } else {
+                result.copy(relevanceScore = calculateRelevance(query, kind, result, 0))
             }
-            .distinctBy { canonicalUrl(it.url) }
+        }
 
-        // The Instant Answer endpoint is a small knowledge-panel fallback, not a replacement
-        // for web-index hits.
-        val attemptedInstantAnswer = indexedResults.size < minOf(5, limit)
-        val instantResults = if (attemptedInstantAnswer) {
-            runCatching { searchInstantAnswer(query, limit) }.getOrDefault(emptyList())
-                .map { result -> result.copy(relevanceScore = calculateRelevance(query, kind, result, 0)) }
+        val shouldTryInstantAnswer = baseResults.count { it.imageUrl.isNullOrBlank() } < minOf(5, limit)
+        val instantResults = if (shouldTryInstantAnswer) {
+            runCatching { searchInstantAnswer(query, limit) }
+                .getOrDefault(emptyList())
+                .map { it.copy(relevanceScore = calculateRelevance(query, kind, it, 0)) }
         } else emptyList()
 
-        val results = (indexedResults + imageResults + instantResults)
-            .distinctBy { canonicalUrl(it.url) }
-            .groupBy { sourceHost(it.url) }
-            .values
-            .flatMap { group ->
-                group.sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
-                    .take(if (group.any { it.imageUrl != null }) 8 else 5)
+        // Image indexes often return multiple images from one publisher page. Deduplicate by
+        // the image URL for image records, and by the page URL for ordinary web records.
+        val merged = (baseResults + instantResults)
+            .distinctBy {
+                if (!it.imageUrl.isNullOrBlank()) "image:" + canonicalUrl(it.imageUrl)
+                else canonicalUrl(it.url)
             }
-            .sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
+            .sortedWith(
+                compareByDescending<PublicProfileResult> { it.relevanceScore }
+                    .thenByDescending { it.confidence }
+            )
             .take(limit)
 
-        val warnings = buildList {
-            outcomes.filter { it.error != null }.take(5).forEach { failed ->
-                add("${failed.provider}: تعذر جلب «${failed.query}»: ${failed.error}")
-            }
-            if (includeImages && imageError != null) add("بحث الصور: $imageError")
-            if (includeImages && imageResults.isEmpty() && imageError == null) {
-                add("لم تظهر صور مفهرسة مطابقة في Wikimedia Commons لهذه العبارة؛ تغطية هذا المصدر محدودة وليست بحث صور شاملاً لكل الويب.")
-            }
-            if (results.isEmpty()) {
-                add("لم تُستخرج نتائج مباشرة من مزودي البحث الذين أمكن الوصول إليهم. هذا لا يعني عدم وجود معلومات؛ قد يغيّر المزود بنية الصفحة أو يحدّ الطلبات.")
-            }
-        }.distinct()
+        val warnings = (broadOutcome.warnings + if (shouldTryInstantAnswer && instantResults.isEmpty()) {
+            listOf("لم يُرجع مصدر المعرفة الإضافي نتائج؛ لا يؤثر ذلك في نتائج محركات البحث الأخرى.")
+        } else emptyList()).distinct()
 
         return PublicWebSearchResponse(
             query = query,
-            results = results,
+            results = merged,
             warnings = warnings,
-            providersAttempted = outcomes.size + (if (includeImages) 1 else 0) + (if (attemptedInstantAnswer) 1 else 0)
+            providersAttempted = broadOutcome.attempted + if (shouldTryInstantAnswer) 1 else 0
         )
     }
 

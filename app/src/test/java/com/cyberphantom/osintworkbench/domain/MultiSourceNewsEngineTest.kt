@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 class MultiSourceNewsEngineTest {
     private val engine = MultiSourceNewsEngine()
@@ -41,6 +42,53 @@ class MultiSourceNewsEngineTest {
 
         assertEquals(1, stories.size)
         assertEquals("Public security update", stories.single().title)
+        assertNull(stories.single().imageUrl)
+    }
+
+    @Test
+    fun parsesGdeltJsonIntoPublisherAttributedStories() {
+        val json = JSONObject(
+            """
+            {
+              "articles": [{
+                "url": "https://www.reuters.com/world/example-story/",
+                "title": "Global security update",
+                "seendate": "20261021T100000Z",
+                "domain": "www.reuters.com",
+                "language": "English",
+                "sourcecountry": "United States",
+                "socialimage": "https://images.example.org/gdelt.jpg"
+              }]
+            }
+            """.trimIndent()
+        )
+
+        val stories = engine.parseGdeltResponse(json)
+
+        assertEquals(1, stories.size)
+        assertEquals("Reuters", stories.single().publisherName)
+        assertEquals("reuters.com", stories.single().domain)
+        assertEquals("GDELT DOC API", stories.single().provider)
+        assertEquals("https://images.example.org/gdelt.jpg", stories.single().imageUrl)
+    }
+
+    @Test
+    fun gdeltImageTogglePreservesStoryMetadataButHidesImageUrl() {
+        val json = JSONObject(
+            """
+            {"articles":[{
+              "url":"https://www.reuters.com/world/example-story/",
+              "title":"Global security update",
+              "domain":"www.reuters.com",
+              "socialimage":"https://images.example.org/gdelt.jpg"
+            }]}
+            """.trimIndent()
+        )
+
+        val stories = engine.parseGdeltResponse(json, includeImages = false)
+
+        assertEquals(1, stories.size)
+        assertEquals("Global security update", stories.single().title)
         assertNull(stories.single().imageUrl)
     }
 

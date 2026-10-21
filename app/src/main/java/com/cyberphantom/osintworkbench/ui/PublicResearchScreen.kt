@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -50,6 +51,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cyberphantom.osintworkbench.data.LocalStore
+import coil.compose.AsyncImage
+import com.cyberphantom.osintworkbench.domain.AdvancedPublicSearchEngine
+import com.cyberphantom.osintworkbench.domain.MultiSourceNewsEngine
 import com.cyberphantom.osintworkbench.domain.IdentifierKind
 import com.cyberphantom.osintworkbench.domain.NewsArticle
 import com.cyberphantom.osintworkbench.domain.NewsSearchResult
@@ -66,6 +70,7 @@ private enum class ResearchMode { IDENTIFIERS, NEWS }
 @Composable
 fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     val engine = remember { PublicResearchEngine() }
+    val automatedSearch = remember { AdvancedPublicSearchEngine() }
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
     var mode by rememberSaveable { mutableStateOf(ResearchMode.IDENTIFIERS) }
@@ -77,6 +82,8 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     var profiles by remember { mutableStateOf(emptyList<PublicProfileResult>()) }
     var news by remember { mutableStateOf<NewsSearchResult?>(null) }
     var searchReport by remember { mutableStateOf<ScanReport?>(null) }
+    var phoneMetadata by remember { mutableStateOf<String?>(null) }
+    var sourceWarnings by remember { mutableStateOf(emptyList<String>()) }
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
@@ -96,13 +103,13 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                 modifier = Modifier.weight(1f),
                 selected = mode == ResearchMode.IDENTIFIERS,
                 label = "الأسماء والمعرّفات",
-                onClick = { mode = ResearchMode.IDENTIFIERS; error = null; news = null }
+                onClick = { mode = ResearchMode.IDENTIFIERS; error = null; news = null; phoneMetadata = null; sourceWarnings = emptyList() }
             )
             ModeButton(
                 modifier = Modifier.weight(1f),
                 selected = mode == ResearchMode.NEWS,
                 label = "الأخبار",
-                onClick = { mode = ResearchMode.NEWS; error = null; profiles = emptyList(); links = emptyList() }
+                onClick = { mode = ResearchMode.NEWS; error = null; profiles = emptyList(); links = emptyList(); phoneMetadata = null; sourceWarnings = emptyList() }
             )
         }
 
@@ -139,8 +146,8 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                         when (kind) {
                             IdentifierKind.NAME -> "سيبحث التطبيق في قواعد بيانات عامة محددة، ويجهز روابط بحث إضافية في محركات الويب."
                             IdentifierKind.USERNAME -> "تظهر نتائج GitHub العامة داخل التطبيق، مع روابط بحث مفهرس لمنصات أخرى. الروابط لا تثبت وحدها ملكية الحساب."
-                            IdentifierKind.PHONE -> "لا نفترض الدولة أو مالك الرقم. ستُفتح نتائج البحث العام فقط، دون الاتصال بالرقم أو استخراج موقعه."
-                            IdentifierKind.EMAIL -> "لا نبحث في قواعد بيانات تسريبات أو كلمات مرور. لن يُرسل البريد لأي محرك إلا عند ضغطك على رابط ذلك المحرك."
+                            IdentifierKind.PHONE -> "عند الضغط على البحث، يجمع التطبيق النتائج العامة المفهرسة تلقائياً من DuckDuckGo، بما فيها صفحات Reddit وأدلة الإبلاغ العامة إن ظهرت. لا يكشف مالك الرقم أو نشاطه يقيناً."
+                            IdentifierKind.EMAIL -> "البحث المباشر يجلب الصفحات العامة المفهرسة تلقائياً. تتم مشاركة عبارة البحث مع مزود البحث العام؛ لا نبحث في قواعد كلمات المرور أو التسريبات الخاصة."
                         },
                         color = WorkbenchColors.TextSecondary,
                         fontSize = 11.sp,
@@ -184,16 +191,17 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                 val startedAt = System.currentTimeMillis()
                                 try {
                                     if (mode == ResearchMode.NEWS) {
-                                        val result = engine.searchNews(query)
+                                        val result = MultiSourceNewsEngine().search(query)
                                         news = result
                                         val records = result.articles.map { article ->
                                             ReconRecord(
                                                 kind = "NEWS_ARTICLE",
                                                 value = article.title,
-                                                source = article.domain.ifBlank { "GDELT DOC API" },
+                                                source = article.publisherName.ifBlank { article.domain.ifBlank { article.provider } },
                                                 sourceUrl = article.url,
                                                 confidence = 78,
-                                                detail = "${article.publishedAt} · ${article.sourceCountry} · ${article.language}".trim()
+                                                detail = "${article.provider} · ${article.publishedAt} · ${article.sourceCountry} · ${article.language}".trim(),
+                                                previewImageUrl = article.imageUrl
                                             )
                                         }
                                         val reportTarget = "news: ${query.trim()}"
@@ -206,15 +214,16 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                         )
                                         searchReport = report
                                         withContext(Dispatchers.IO) {
-                                            val queryId = store.upsertEntity(reportTarget, "NEWS_QUERY", "GDELT DOC API", 70)
+                                            val queryId = store.upsertEntity(reportTarget, "NEWS_QUERY", "Multi-source news search", 70)
                                             result.articles.forEach { article ->
-                                                val articleId = store.upsertEntity("${article.title} · ${article.domain.ifBlank { "GDELT" }}", "NEWS_ARTICLE", article.domain.ifBlank { "GDELT" }, 78)
-                                                store.addEdge(articleId, queryId, "MATCHED_NEWS", "GDELT DOC API", 78)
+                                                val publisher = article.publisherName.ifBlank { article.domain.ifBlank { article.provider } }
+                                                val articleId = store.upsertEntity("${article.title} · $publisher", "NEWS_ARTICLE", publisher, 78)
+                                                store.addEdge(articleId, queryId, "MATCHED_NEWS", article.provider, 78)
                                                 store.addFinding(
                                                     queryId,
                                                     article.title,
-                                                    "${article.publishedAt} · ${article.url}",
-                                                    "GDELT · ${article.domain}",
+                                                    "${publisher} · ${article.publishedAt} · ${article.url}",
+                                                    article.provider,
                                                     "info"
                                                 )
                                             }
@@ -222,7 +231,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                                 target = report.target,
                                                 status = if (report.records.isEmpty()) "no_results" else "completed",
                                                 startedAt = report.startedAt,
-                                                summary = "${report.records.size} articles · GDELT DOC API",
+                                                summary = "${report.records.size} articles · ${result.articles.map { it.publisherName }.distinct().size} publishers",
                                                 records = report.records.size,
                                                 payloadJson = report.toJson()
                                             )
@@ -231,22 +240,29 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                         if (result.warning != null) error = result.warning
                                     } else {
                                         links = engine.buildSearchLinks(query, kind)
-                                        val actualResults = withContext(Dispatchers.IO) {
+                                        val webResponse = withContext(Dispatchers.IO) {
+                                            automatedSearch.search(query, kind, maxResults = 30)
+                                        }
+                                        phoneMetadata = if (kind == IdentifierKind.PHONE) automatedSearch.phoneMetadata(query) else null
+                                        sourceWarnings = webResponse.warnings
+                                        val apiResults = withContext(Dispatchers.IO) {
                                             when (kind) {
-                                                IdentifierKind.NAME -> engine.searchGitHubUsers(query) + engine.searchWikidata(query)
-                                                IdentifierKind.USERNAME -> engine.searchGitHubUsers(query)
+                                                IdentifierKind.NAME -> runCatching { engine.searchGitHubUsers(query) }.getOrDefault(emptyList()) +
+                                                    runCatching { engine.searchWikidata(query) }.getOrDefault(emptyList())
+                                                IdentifierKind.USERNAME -> runCatching { engine.searchGitHubUsers(query) }.getOrDefault(emptyList())
                                                 IdentifierKind.PHONE, IdentifierKind.EMAIL -> emptyList()
                                             }
-                                        }.distinctBy { it.url }
+                                        }
+                                        val actualResults = (webResponse.results + apiResults)
+                                            .distinctBy { it.url.trimEnd('/').lowercase() }
+                                            .take(40)
                                         profiles = actualResults
-                                        val warningList = if (actualResults.isEmpty()) {
-                                            listOf(
-                                                if (kind == IdentifierKind.PHONE || kind == IdentifierKind.EMAIL)
-                                                    "لم يتم كشط محركات البحث أو منصات التواصل تلقائياً؛ الروابط أدناه تفتح مزود البحث عند اختيارك."
-                                                else
-                                                    "لم تُعد واجهات GitHub/Wikidata نتيجة مباشرة. الروابط أدناه هي عمليات بحث خارجية لم تُنفّذ تلقائياً."
+                                        val warningList = buildList {
+                                            addAll(webResponse.warnings)
+                                            if (actualResults.isEmpty()) add(
+                                                "لم تُعد المصادر المباشرة نتائج. الروابط البديلة أدناه ما زالت متاحة، والنتيجة الصفرية لا تثبت عدم وجود معلومات."
                                             )
-                                        } else emptyList()
+                                        }.distinct()
                                         val reportTarget = "${kind.label}: ${query.trim()}"
                                         val records = actualResults.map { profile ->
                                             ReconRecord(
@@ -255,7 +271,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                                 source = profile.provider,
                                                 sourceUrl = profile.url,
                                                 confidence = profile.confidence,
-                                                detail = profile.description
+                                                detail = "${profile.description} · ${profile.provider}"
                                             )
                                         }
                                         val report = ScanReport(
@@ -283,7 +299,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                                                 target = report.target,
                                                 status = if (report.records.isEmpty()) "no_results" else "completed",
                                                 startedAt = report.startedAt,
-                                                summary = "${report.records.size} API results · ${report.warnings.size} notes",
+                                                summary = "${report.records.size} public results · ${report.warnings.size} notes",
                                                 records = report.records.size,
                                                 payloadJson = report.toJson()
                                             )
@@ -331,8 +347,16 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
         searchReport?.let { ReportQuickActions(it) }
 
         if (mode == ResearchMode.IDENTIFIERS) {
+            if (phoneMetadata != null) {
+                Surface(color = Color(0xFF10282D), shape = RoundedCornerShape(14.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF24534F))) {
+                    Text(phoneMetadata.orEmpty(), modifier = Modifier.padding(12.dp), color = WorkbenchColors.TextSecondary, fontSize = 11.sp, lineHeight = 18.sp)
+                }
+            }
+            if (sourceWarnings.isNotEmpty()) {
+                sourceWarnings.forEach { warning -> Text(warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 17.sp) }
+            }
             if (profiles.isNotEmpty()) {
-                ResearchSectionHeader("نتائج APIs العامة", "${profiles.size} نتيجة من GitHub وWikidata")
+                ResearchSectionHeader("نتائج مباشرة من الويب", "${profiles.size} نتيجة مفهرسة من DuckDuckGo وواجهات عامة")
                 profiles.forEach { profile ->
                     PublicProfileCard(profile = profile, onOpen = { uriHandler.openUri(profile.url) })
                 }
@@ -380,7 +404,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
             }
         } else {
             news?.let { result ->
-                ResearchSectionHeader("نتائج الأخبار", "${result.articles.size} مقالة أعادها GDELT")
+                ResearchSectionHeader("نتائج الأخبار", "${result.articles.size} مقالة من GDELT وموجّهات RSS لناشرين متعددين")
                 if (result.warning != null) {
                     Text(result.warning, color = WorkbenchColors.Amber, fontSize = 11.sp, lineHeight = 18.sp)
                 }
@@ -444,11 +468,20 @@ private fun NewsArticleCard(article: NewsArticle, onOpen: () -> Unit) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 androidx.compose.material3.Icon(Icons.Filled.Article, contentDescription = null, tint = WorkbenchColors.Teal, modifier = Modifier.size(17.dp))
-                Text(article.domain.ifBlank { "مصدر إخباري" }, fontSize = 10.sp, color = WorkbenchColors.Teal, fontWeight = FontWeight.SemiBold)
+                Text(article.publisherName.ifBlank { article.domain.ifBlank { "مصدر إخباري" } }, fontSize = 10.sp, color = WorkbenchColors.Teal, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.weight(1f))
                 Text(article.publishedAt.ifBlank { "وقت النشر غير متاح" }, fontSize = 9.sp, color = WorkbenchColors.TextSecondary)
             }
             Text(article.title, fontWeight = FontWeight.Bold, fontSize = 13.sp, lineHeight = 19.sp)
+            if (!article.imageUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = article.imageUrl,
+                    contentDescription = "صورة خبر من ${article.publisherName}",
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 180.dp).clip(RoundedCornerShape(12.dp)),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                )
+            }
+            Text(article.provider, fontSize = 9.sp, color = WorkbenchColors.TextSecondary)
             if (article.sourceCountry.isNotBlank() || article.language.isNotBlank()) {
                 Text(listOf(article.sourceCountry, article.language).filter(String::isNotBlank).joinToString(" · "), fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
             }

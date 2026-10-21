@@ -355,6 +355,18 @@ class ReconEngine {
                 lastError
             )
         }
+        if (captures.isEmpty()) {
+            return@withContext listOf(
+                ReconRecord(
+                    kind = "WAYBACK_STATUS",
+                    value = "لم تُرجع واجهة الأرشيف لقطات متاحة لهذا النطاق",
+                    source = "Internet Archive Wayback Availability API",
+                    sourceUrl = "https://archive.org/wayback/available?url=${enc("https://$domain/")}",
+                    confidence = 35,
+                    detail = "هذا يعني أن الاستعلامات الحالية لم تُرجع لقطة؛ لا يثبت ذلك أن النطاق لم يُؤرشف قط. يمكن إعادة المحاولة أو فتح الأرشيف يدوياً."
+                )
+            )
+        }
 
         val ordered = captures.distinctBy { "${it.timestamp}|${it.original}" }
             .sortedByDescending { it.timestamp }
@@ -437,25 +449,60 @@ class ReconEngine {
             .toList()
         buildList {
             for (ip in ips) {
-                val endpoint = "https://ipwho.is/${enc(ip)}"
-                val root = runCatching { JSONObject(getText(endpoint, timeoutMs = 7_000)) }.getOrNull() ?: continue
-                if (!root.optBoolean("success", true)) continue
-                val country = root.optString("country").takeIf(String::isNotBlank) ?: continue
-                val region = root.optString("region").takeIf(String::isNotBlank)
-                val city = root.optString("city").takeIf(String::isNotBlank)
-                val location = listOfNotNull(city, region, country).distinct().joinToString(", ")
-                val isp = root.optJSONObject("connection")?.optString("isp")
-                    ?.takeIf { it.isNotBlank() && it != "null" }
-                add(
-                    ReconRecord(
-                        kind = "IP_GEOLOCATION",
-                        value = "$ip · $location" + (isp?.let { " · $it" } ?: ""),
-                        source = "ipwho.is public IP geolocation",
-                        sourceUrl = endpoint,
-                        confidence = 42,
-                        detail = "موقع تقريبي لعنوان IP وليس عنواناً مادياً مؤكداً للخادم. قد يشير إلى مركز بيانات أو CDN أو استضافة مشتركة أو وكيل؛ لا يحدد مكان شخص."
-                    )
+                val providers = listOf(
+                    "ipwho.is" to "https://ipwho.is/${enc(ip)}",
+                    "ipapi.co" to "https://ipapi.co/${enc(ip)}/json/"
                 )
+                var location: String? = null
+                var isp: String? = null
+                var source = ""
+                var sourceUrl = ""
+                var failure: String? = null
+                for ((provider, endpoint) in providers) {
+                    try {
+                        val root = JSONObject(getText(endpoint, timeoutMs = 7_000))
+                        if (provider == "ipwho.is" && !root.optBoolean("success", true)) {
+                            failure = root.optString("message").ifBlank { "provider marked result unsuccessful" }
+                            continue
+                        }
+                        val country = (root.optString("country").takeIf { it.isNotBlank() && it != "null" }
+                            ?: root.optString("country_name").takeIf { it.isNotBlank() && it != "null" })
+                        if (country.isNullOrBlank()) continue
+                        val region = root.optString("region").takeIf { it.isNotBlank() && it != "null" }
+                        val city = root.optString("city").takeIf { it.isNotBlank() && it != "null" }
+                        location = listOfNotNull(city, region, country).distinct().joinToString(", ")
+                        isp = root.optJSONObject("connection")?.optString("isp")?.takeIf { it.isNotBlank() && it != "null" }
+                            ?: root.optString("org").takeIf { it.isNotBlank() && it != "null" }
+                        source = "$provider public IP geolocation"
+                        sourceUrl = endpoint
+                        break
+                    } catch (error: Exception) {
+                        failure = error.message
+                    }
+                }
+                if (location != null) {
+                    add(
+                        ReconRecord(
+                            kind = "IP_GEOLOCATION",
+                            value = "$ip · $location" + (isp?.let { " · $it" } ?: ""),
+                            source = source,
+                            sourceUrl = sourceUrl,
+                            confidence = 42,
+                            detail = "موقع تقريبي لعنوان IP وليس عنواناً مادياً مؤكداً للخادم. قد يشير إلى مركز بيانات أو CDN أو استضافة مشتركة أو وكيل؛ لا يحدد مكان شخص."
+                        )
+                    )
+                } else {
+                    add(
+                        ReconRecord(
+                            kind = "IP_GEOLOCATION_UNAVAILABLE",
+                            value = "تعذر تحديد الموقع التقريبي لـ $ip",
+                            source = "IP geolocation fallback providers",
+                            sourceUrl = providers.first().second,
+                            confidence = 10,
+                            detail = "تعذر الوصول إلى مزودي تحديد الموقع أو لم يعيدوا موقعاً. لا يمكن استنتاج مكان الخادم من عنوان IP وحده دون بيانات قابلة للتحقق. ${failure.orEmpty()}"
+                        )
+                    )
+                }
             }
         }
     }

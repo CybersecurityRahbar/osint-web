@@ -17,6 +17,14 @@ data class LocalIntelligenceInsight(
  * from shared infrastructure. Every correlation is based on stored, source-backed edges.
  */
 object LocalIntelligenceEngine {
+    private data class RelationEvidenceKey(
+        val fromValue: String,
+        val fromKind: String,
+        val toValue: String,
+        val toKind: String,
+        val relation: String
+    )
+
     fun analyze(
         entities: List<EntityRow>,
         relations: List<RelationRow>,
@@ -38,6 +46,30 @@ object LocalIntelligenceEngine {
                 recommendation = "قارن سجلات DNS والشهادات وتواريخ الجمع قبل استنتاج أي علاقة تنظيمية.",
                 priority = 2,
                 evidenceCount = rows.size
+            )
+        }
+
+        val corroboratedGroups = relations
+            .groupBy {
+                RelationEvidenceKey(
+                    fromValue = it.fromValue,
+                    fromKind = it.fromKind,
+                    toValue = it.toValue,
+                    toKind = it.toKind,
+                    relation = it.relation
+                )
+            }
+            .values
+            .filter { evidence -> evidence.map { it.source }.filter(String::isNotBlank).distinct().size >= 2 }
+
+        if (corroboratedGroups.isNotEmpty()) {
+            val sourceNames = corroboratedGroups.flatten().map { it.source }.filter(String::isNotBlank).distinct()
+            insights += LocalIntelligenceInsight(
+                title = "علاقات لها أكثر من مصدر مسجل",
+                explanation = "${corroboratedGroups.size} علاقات ظهرت في أكثر من مصدر محفوظ. تعدد أسماء المصادر لا يضمن استقلال بياناتها؛ ربما تعتمد على سجل عام واحد.",
+                recommendation = "راجع تاريخ كل ملاحظة وروابط المصدر، ثم تحقق من استقلال المصادر قبل زيادة الثقة بالاستنتاج.",
+                priority = 2,
+                evidenceCount = corroboratedGroups.sumOf { it.map(RelationRow::source).distinct().size }
             )
         }
 

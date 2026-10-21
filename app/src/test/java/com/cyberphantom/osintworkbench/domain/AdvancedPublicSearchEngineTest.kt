@@ -121,6 +121,21 @@ class AdvancedPublicSearchEngineTest {
     }
 
     @Test
+    fun parsesYahooStyleH3Links() {
+        val html = """
+            <div class="compTitle">
+              <h3><a class="ac-algo" href="https://example.org/yahoo-result">Yahoo public result</a></h3>
+            </div>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Yahoo test")
+
+        assertEquals(1, results.size)
+        assertEquals("Yahoo public result", results.single().title)
+        assertEquals("https://example.org/yahoo-result", results.single().url)
+    }
+
+    @Test
     fun expandedNameSearchIncludesSeveralPublicIndexSurfaces() {
         val queries = engine.buildSearchQueries("Ada Lovelace", IdentifierKind.NAME)
         assertTrue(queries.any { it.contains("reddit.com") })

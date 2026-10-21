@@ -308,7 +308,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                 rows += EntityRow(
                     id = cursor.getLong(0),
                     value = cursor.getString(1),
-                    kind = cursor.getString(2),
+                    kind = cursor.getString(2).substringBefore('@'),
                     source = cursor.getString(3),
                     confidence = cursor.getInt(4),
                     createdAt = cursor.getLong(5),
@@ -333,9 +333,9 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
             while (cursor.moveToNext()) {
                 rows += RelationRow(
                     fromValue = cursor.getString(0),
-                    fromKind = cursor.getString(1),
+                    fromKind = cursor.getString(1).substringBefore('@'),
                     toValue = cursor.getString(2),
-                    toKind = cursor.getString(3),
+                    toKind = cursor.getString(3).substringBefore('@'),
                     relation = cursor.getString(4),
                     source = cursor.getString(5),
                     confidence = cursor.getInt(6),

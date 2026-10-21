@@ -500,7 +500,7 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
     ) {
         ScreenHeading(
             title = "ذكاء النطاقات",
-            subtitle = "استطلاع سلبي للأصول العامة",
+            subtitle = "استطلاع عام مع اختبارات اتصال اختيارية محدودة",
             icon = Icons.Filled.Dns
         )
         Surface(
@@ -590,10 +590,12 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                             "DNS_MX" -> "USES_MAIL_EXCHANGE"
                                             "SUBDOMAIN" -> "SUBDOMAIN_OF"
                                             "WAYBACK_SNAPSHOT" -> "ARCHIVED_VERSION_OF"
+                                            "WAYBACK_STATUS" -> "ARCHIVE_LOOKUP_STATUS"
                                             "RDAP_REGISTRAR" -> "REGISTERED_THROUGH"
                                             "RDAP_STATUS", "RDAP_REGISTERED", "RDAP_EXPIRES", "RDAP_UPDATED" -> "REGISTRATION_METADATA_FOR"
                                             "HTTPS_REDIRECT" -> "REDIRECTS_TO"
                                             "IP_GEOLOCATION" -> "GEOLOCATED_AT_APPROXIMATE"
+                                            "IP_GEOLOCATION_UNAVAILABLE" -> "GEOLOCATION_LOOKUP_STATUS"
                                             "OPEN_TCP_PORT" -> "EXPOSES_TCP_PORT"
                                             "POTENTIAL_SENSITIVE_EXPOSURE" -> "POTENTIAL_PUBLIC_EXPOSURE_INDICATOR"
                                             "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY" -> "HAS_CHECK_SUMMARY"
@@ -605,7 +607,8 @@ private fun ReconScreen(store: LocalStore, onSaved: () -> Unit) {
                                         }
                                         val rootToNode = item.kind in setOf(
                                             "DNS_A", "DNS_AAAA", "DNS_NS", "DNS_MX", "HTTPS_REDIRECT",
-                                            "IP_GEOLOCATION", "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
+                                            "WAYBACK_STATUS", "IP_GEOLOCATION", "IP_GEOLOCATION_UNAVAILABLE",
+                                            "OPEN_TCP_PORT", "POTENTIAL_SENSITIVE_EXPOSURE",
                                             "PORT_SCAN_SUMMARY", "EXPOSURE_CHECK_SUMMARY",
                                             "WEB_IMAGE", "WEB_PREVIEW_IMAGE", "WEB_TITLE", "DNS_TXT",
                                             "HTTPS_STATUS", "HTTP_SERVER_HEADER", "TECH_X_POWERED_BY",

@@ -649,7 +649,8 @@ class ReconEngine {
 
     private fun probeExposurePath(domain: String, path: String, signature: Regex): ReconRecord? {
         // Some legitimate sites serve only HTTP; check HTTPS first, then try HTTP once.
-        for (scheme in listOf("https", "http")) {
+        // The app intentionally disallows cleartext HTTP; probe only HTTPS endpoints.
+        for (scheme in listOf("https")) {
             val endpoint = "$scheme://$domain$path"
             val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -686,7 +687,7 @@ class ReconEngine {
                     detail = "تم رصد توقيع محتوى قد يشير إلى ملف/واجهة حساسة مكشوفة. لم يُحفظ محتوى الاستجابة؛ تحقق يدوياً قبل تصنيفها كثغرة."
                 )
             } catch (_: Exception) {
-                // A failed scheme should not suppress trying the alternate public scheme.
+                // A failed public-path request is not, by itself, evidence of a vulnerability.
             } finally {
                 connection.disconnect()
             }
@@ -737,7 +738,7 @@ class ReconEngine {
                 val records = parsePublicDiscoveryFile(path, body, actualUrl)
                 if (records.isNotEmpty()) return records
             } catch (_: Exception) {
-                // Try the other scheme; this check reads only small, public metadata files.
+                // This optional source may not exist or may block automated public requests.
             } finally {
                 connection.disconnect()
             }

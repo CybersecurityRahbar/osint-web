@@ -1,5 +1,6 @@
 package com.cyberphantom.osintworkbench.domain
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -63,6 +64,83 @@ class AdvancedPublicSearchEngineTest {
             engine.calculateRelevance("Ada Lovelace", IdentifierKind.NAME, exact) >
                 engine.calculateRelevance("Ada Lovelace", IdentifierKind.NAME, partial)
         )
+    }
+
+    @Test
+    fun parsesDuckDuckGoExternalResultsAndUnwrapsDestinations() {
+        val html = """
+            <div class="result results_links results_links_deep">
+              <a class="result__a" href="https://example.org/research">Public research page</a>
+              <a class="result__snippet">A useful public record about research.</a>
+            </div>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "DDG test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public research page", results.single().title)
+        assertEquals("https://example.org/research", results.single().url)
+        assertTrue(results.single().description.contains("useful public record"))
+        assertTrue(results.single().provider.startsWith("DDG test"))
+    }
+
+    @Test
+    fun parsesBingResultBlocksWhenDuckDuckGoMarkupIsAbsent() {
+        val html = """
+            <ol id="b_results">
+              <li class="b_algo">
+                <h2><a href="https://example.net/profile">Public profile result</a></h2>
+                <div class="b_caption"><p>Publicly indexed profile description.</p></div>
+              </li>
+            </ol>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Bing test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public profile result", results.single().title)
+        assertEquals("https://example.net/profile", results.single().url)
+        assertTrue(results.single().description.contains("indexed profile"))
+    }
+
+    @Test
+    fun parsesGoogleStyleH3ResultsAndUnwrapsTheRedirectToTheSource() {
+        val html = """
+            <div class="MjjYud">
+              <a href="https://www.google.com/url?q=https%3A%2F%2Fexample.org%2Freport&sa=U">
+                <h3 class="LC20lb">Public report result</h3>
+              </a>
+            </div>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Google test")
+
+        assertEquals(1, results.size)
+        assertEquals("Public report result", results.single().title)
+        assertEquals("https://example.org/report", results.single().url)
+    }
+
+    @Test
+    fun parsesYahooStyleH3Links() {
+        val html = """
+            <div class="compTitle">
+              <h3><a class="ac-algo" href="https://example.org/yahoo-result">Yahoo public result</a></h3>
+            </div>
+        """.trimIndent()
+
+        val results = engine.parseResults(html, limit = 10, provider = "Yahoo test")
+
+        assertEquals(1, results.size)
+        assertEquals("Yahoo public result", results.single().title)
+        assertEquals("https://example.org/yahoo-result", results.single().url)
+    }
+
+    @Test
+    fun expandedNameSearchIncludesSeveralPublicIndexSurfaces() {
+        val queries = engine.buildSearchQueries("Ada Lovelace", IdentifierKind.NAME)
+        assertTrue(queries.any { it.contains("reddit.com") })
+        assertTrue(queries.any { it.contains("github.com") })
+        assertTrue(queries.any { it.contains("instagram.com") || it.contains("tiktok.com") })
     }
 
     @Test

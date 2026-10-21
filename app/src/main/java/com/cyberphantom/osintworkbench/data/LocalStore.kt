@@ -102,7 +102,7 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
                 source TEXT NOT NULL DEFAULT '',
                 confidence INTEGER NOT NULL DEFAULT 50,
                 observed_at INTEGER NOT NULL,
-                UNIQUE(from_id, to_id, relation)
+                UNIQUE(from_id, to_id, relation, source)
             )""".trimIndent()
         )
         db.execSQL(
@@ -147,6 +147,32 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
         // Migrations are additive; existing user data is preserved.
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE scans ADD COLUMN payload_json TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 3) {
+            // v2 allowed only one edge per endpoint pair/relation. Keep that evidence and
+            // migrate to a source-aware uniqueness key so different sources aren't overwritten.
+            db.execSQL("DROP INDEX IF EXISTS idx_edges_from")
+            db.execSQL("ALTER TABLE edges RENAME TO edges_v2")
+            db.execSQL(
+                """CREATE TABLE edges (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    from_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    to_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+                    relation TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT '',
+                    confidence INTEGER NOT NULL DEFAULT 50,
+                    observed_at INTEGER NOT NULL,
+                    UNIQUE(from_id, to_id, relation, source)
+                )""".trimIndent()
+            )
+            db.execSQL(
+                """INSERT OR IGNORE INTO edges
+                   (id, from_id, to_id, relation, source, confidence, observed_at)
+                   SELECT id, from_id, to_id, relation, source, confidence, observed_at
+                   FROM edges_v2""".trimIndent()
+            )
+            db.execSQL("DROP TABLE edges_v2")
+            db.execSQL("CREATE INDEX idx_edges_from ON edges(from_id)")
         }
     }
 
@@ -196,8 +222,8 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
     ) {
         val db = writableDatabase
         val existing = db.rawQuery(
-            "SELECT id FROM edges WHERE from_id = ? AND to_id = ? AND relation = ? LIMIT 1",
-            arrayOf(fromId.toString(), toId.toString(), relation)
+            "SELECT id FROM edges WHERE from_id = ? AND to_id = ? AND relation = ? AND source = ? LIMIT 1",
+            arrayOf(fromId.toString(), toId.toString(), relation, source)
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else null }
         val values = ContentValues().apply {
             put("from_id", fromId)
@@ -639,6 +665,6 @@ class LocalStore(context: Context) : SQLiteOpenHelper(
 
     companion object {
         private const val DATABASE_NAME = "osint_workbench.db"
-        private const val DATABASE_VERSION = 2
+        private const val DATABASE_VERSION = 3
     }
 }

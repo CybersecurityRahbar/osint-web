@@ -64,6 +64,7 @@ internal class BroadPublicSearchAdapter {
         return if (primary) listOf(
             Provider("DuckDuckGo", "https://html.duckduckgo.com/html/?q=$q&kl=wt-wt"),
             Provider("Bing", "https://www.bing.com/search?q=$q&count=10"),
+            Provider("Google", "https://www.google.com/search?q=$q&num=10&hl=en"),
             Provider("Brave", "https://search.brave.com/search?q=$q"),
             Provider("Mojeek", "https://www.mojeek.com/search?q=$q&si=1"),
             Provider("Qwant JSON", "https://api.qwant.com/v3/search/web?q=$q&count=10&locale=en_us&safesearch=0", "qwant"),

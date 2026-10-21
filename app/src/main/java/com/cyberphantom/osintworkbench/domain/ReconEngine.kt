@@ -400,7 +400,9 @@ class ReconEngine {
                 val closest = root.optJSONObject("archived_snapshots")?.optJSONObject("closest")
                 if (closest != null && closest.optBoolean("available", false)) {
                     val timestamp = closest.optString("timestamp")
-                    val original = closest.optString("url").takeIf { it.startsWith("http") } ?: "https://$domain/"
+                    // Availability API's `url` is normally already the archived snapshot URL,
+                    // not the source URL. We queried the exact root, so keep the normalized input.
+                    val original = "https://$domain/"
                     if (timestamp.length >= 8) captures += ArchiveCapture(timestamp, original, closest.optString("status", "200"))
                 }
             } catch (error: Exception) {

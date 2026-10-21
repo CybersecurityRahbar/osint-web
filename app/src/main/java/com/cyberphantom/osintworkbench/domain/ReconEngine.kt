@@ -189,7 +189,7 @@ class ReconEngine {
         var lastError: Exception? = null
         for ((provider, endpoint) in providers) {
             try {
-                val json = getText(endpoint, timeoutMs = 7_000, accept = "application/dns-json")
+                val json = getText(endpoint, timeoutMs = 7_000, accept = "application/dns-json", maxAttempts = 1)
                 val root = JSONObject(json)
                 val answers = root.optJSONArray("Answer") ?: JSONArray()
                 val found = buildList {
@@ -317,7 +317,7 @@ class ReconEngine {
         var lastError: Exception? = null
         for (endpoint in endpoints) {
             try {
-                val json = JSONArray(getText(endpoint, timeoutMs = 12_000))
+                val json = JSONArray(getText(endpoint, timeoutMs = 8_000, maxAttempts = if (endpointIndex == 0) 2 else 1))
                 for (i in 0 until json.length()) {
                     val row = json.optJSONArray(i) ?: continue
                     if (row.length() < 3 || row.optString(0).equals("timestamp", true)) continue
@@ -341,7 +341,7 @@ class ReconEngine {
         if (captures.isEmpty()) {
             val fallbackEndpoint = "https://archive.org/wayback/available?url=${enc("https://$domain/")}"
             try {
-                val root = JSONObject(getText(fallbackEndpoint, timeoutMs = 10_000))
+                val root = JSONObject(getText(fallbackEndpoint, timeoutMs = 6_000, maxAttempts = 1))
                 val closest = root.optJSONObject("archived_snapshots")?.optJSONObject("closest")
                 if (closest != null && closest.optBoolean("available", false)) {
                     val timestamp = closest.optString("timestamp")
@@ -465,7 +465,7 @@ class ReconEngine {
                 var failure: String? = null
                 for ((provider, endpoint) in providers) {
                     try {
-                        val root = JSONObject(getText(endpoint, timeoutMs = 7_000))
+                        val root = JSONObject(getText(endpoint, timeoutMs = 5_000, maxAttempts = 1))
                         if (provider == "ipwho.is" && !root.optBoolean("success", true)) {
                             failure = root.optString("message").ifBlank { "provider marked result unsuccessful" }
                             continue
@@ -930,9 +930,15 @@ class ReconEngine {
         }
     }
 
-    private fun getText(endpoint: String, timeoutMs: Int, accept: String = "application/json"): String {
+    private fun getText(
+        endpoint: String,
+        timeoutMs: Int,
+        accept: String = "application/json",
+        maxAttempts: Int = 2
+    ): String {
         var lastError: Exception? = null
-        repeat(3) { attempt ->
+        val attempts = maxAttempts.coerceIn(1, 3)
+        repeat(attempts) { attempt ->
             try {
                 return getTextOnce(endpoint, timeoutMs, accept)
             } catch (error: Exception) {
@@ -940,8 +946,8 @@ class ReconEngine {
                 val message = error.message.orEmpty()
                 val retryable = listOf("HTTP 429", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504", "timed out", "timeout")
                     .any { message.contains(it, ignoreCase = true) }
-                if (!retryable || attempt == 2) throw error
-                Thread.sleep(if (attempt == 0) 400L else 900L)
+                if (!retryable || attempt == attempts - 1) throw error
+                Thread.sleep(if (attempt == 0) 300L else 700L)
             }
         }
         throw lastError ?: IllegalStateException("Request failed")

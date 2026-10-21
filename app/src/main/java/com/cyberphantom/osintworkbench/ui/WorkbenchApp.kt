@@ -137,8 +137,8 @@ fun WorkbenchApp() {
                 DashboardSnapshot(
                     stats = store.stats(),
                     findings = store.recentFindings(8),
-                    entities = store.entities(100),
-                    relations = store.relations(100),
+                    entities = store.entities(1_000),
+                    relations = store.relations(1_000),
                     cases = store.cases(100)
                 )
             }
@@ -821,7 +821,7 @@ private fun GraphScreen(entities: List<EntityRow>, relations: List<RelationRow>)
         }
 
         if (entities.isNotEmpty()) {
-            SectionHeader("مخزن الكيانات", "${entities.size} كياناً في أحدث 100 نتيجة")
+            SectionHeader("مخزن الكيانات", "${entities.size} كياناً في مجموعة التحليل المحلي")
             entities.take(25).forEach { entity ->
                 Surface(
                     color = WorkbenchColors.Surface,

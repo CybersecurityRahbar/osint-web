@@ -21,9 +21,9 @@ android {
     // so a new preview can be installed alongside an older app without replacing its data.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".preview"
+            applicationIdSuffix = ".preview050"
             versionNameSuffix = "-preview"
-            manifestPlaceholders["appLabel"] = "OSINT Workbench Preview"
+            manifestPlaceholders["appLabel"] = "OSINT Workbench Preview 0.5"
         }
     }
 

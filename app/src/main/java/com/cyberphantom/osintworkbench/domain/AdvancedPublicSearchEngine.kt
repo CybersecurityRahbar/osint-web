@@ -7,6 +7,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.net.URI
 import java.net.URL
 import java.net.URLDecoder
@@ -120,17 +122,31 @@ class AdvancedPublicSearchEngine {
             }.awaitAll()
         }
 
-        val results = outcomes
-            .flatMap { attempt -> attempt.results.map { it.copy(confidence = (it.confidence - attempt.index * 2).coerceIn(45, 85)) } }
+        val indexedResults = outcomes
+            .flatMap { attempt ->
+                attempt.results.map { result ->
+                    result.copy(relevanceScore = calculateRelevance(query, kind, result, attempt.index))
+                }
+            }
+            .distinctBy { canonicalUrl(it.url) }
+
+        // The Instant Answer endpoint is a small, independent fallback for definitions and
+        // knowledge-panel style results. It supplements web-index hits; it doesn't replace them.
+        val instantResults = if (indexedResults.size < minOf(5, limit)) {
+            runCatching { searchInstantAnswer(query, limit) }.getOrDefault(emptyList())
+                .map { result -> result.copy(relevanceScore = calculateRelevance(query, kind, result, 0)) }
+        } else emptyList()
+
+        val results = (indexedResults + instantResults)
             .distinctBy { canonicalUrl(it.url) }
             .groupBy { sourceHost(it.url) }
             .values
-            .flatMap { group -> group.take(4) }
-            .sortedByDescending { it.confidence }
+            .flatMap { group -> group.sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence }).take(5) }
+            .sortedWith(compareByDescending<PublicProfileResult> { it.relevanceScore }.thenByDescending { it.confidence })
             .take(limit)
 
         val warnings = buildList {
-            outcomes.filter { it.error != null }.forEach { failed ->
+            outcomes.filter { it.error != null }.take(4).forEach { failed ->
                 add("DuckDuckGo: تعذر جلب بحث «${failed.query}»: ${failed.error}")
             }
             if (results.isEmpty() && outcomes.all { it.results.isEmpty() }) {
@@ -142,8 +158,138 @@ class AdvancedPublicSearchEngine {
             query = query,
             results = results,
             warnings = warnings,
-            providersAttempted = outcomes.size
+            providersAttempted = outcomes.size + if (instantResults.isNotEmpty()) 1 else 0
         )
+    }
+
+    /**
+     * Deterministic lexical ranking: exact identifier hits rank above vague token overlap.
+     * The score is a relevance heuristic, not a probability or proof that the result belongs
+     * to the searched person/number.
+     */
+    internal fun calculateRelevance(
+        query: String,
+        kind: IdentifierKind,
+        result: PublicProfileResult,
+        queryExpansionIndex: Int = 0
+    ): Int {
+        val title = normalizeForRanking(result.title)
+        val description = normalizeForRanking(result.description)
+        val destination = normalizeForRanking(result.url)
+        val combined = "$title $description $destination"
+        var score = 18
+
+        when (kind) {
+            IdentifierKind.PHONE -> {
+                val digits = query.filter(Char::isDigit)
+                val resultDigits = (result.title + " " + result.description + " " + result.url).filter(Char::isDigit)
+                if (digits.length >= 7 && resultDigits.contains(digits)) score += 58
+                else if (digits.length >= 7 && resultDigits.contains(digits.takeLast(7))) score += 28
+                if (result.provider.contains("Tellows", true) ||
+                    result.provider.contains("Sync.ME", true) ||
+                    result.provider.contains("Should I Answer", true)
+                ) score += 5
+            }
+            IdentifierKind.EMAIL -> {
+                val email = query.trim().lowercase(Locale.ROOT)
+                if (email.isNotBlank() && combined.contains(email)) score += 60
+                else {
+                    val parts = email.split('@')
+                    if (parts.firstOrNull().orEmpty().length >= 3 && combined.contains(parts.first())) score += 18
+                    if (parts.getOrNull(1).orEmpty().contains('.') && combined.contains(parts[1])) score += 12
+                }
+            }
+            IdentifierKind.USERNAME -> {
+                val username = query.trim().removePrefix("@").lowercase(Locale.ROOT)
+                if (username.length >= 2 && (title.contains(username) || destination.contains(username))) score += 48
+                else if (username.length >= 2 && description.contains(username)) score += 25
+            }
+            IdentifierKind.NAME -> {
+                val phrase = normalizeForRanking(query)
+                if (phrase.length >= 3 && title.contains(phrase)) score += 36
+                if (phrase.length >= 3 && description.contains(phrase)) score += 16
+                val tokens = phrase.split(' ').filter { it.length >= 2 }.distinct()
+                if (tokens.isNotEmpty()) {
+                    val titleMatches = tokens.count { title.contains(it) }
+                    val descriptionMatches = tokens.count { description.contains(it) }
+                    score += (24 * titleMatches / tokens.size)
+                    score += (12 * descriptionMatches / tokens.size)
+                }
+            }
+        }
+
+        score -= queryExpansionIndex.coerceAtLeast(0) * 3
+        return score.coerceIn(0, 100)
+    }
+
+    private fun normalizeForRanking(value: String): String =
+        value.lowercase(Locale.ROOT)
+            .replace(Regex("[^\\p{L}\\p{N}@.+_-]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+    private suspend fun searchInstantAnswer(query: String, limit: Int): List<PublicProfileResult> = withContext(Dispatchers.IO) {
+        val endpoint = "https://api.duckduckgo.com/?q=${URLEncoder.encode(query, StandardCharsets.UTF_8.name())}&format=json&no_html=1&skip_disambig=1"
+        val connection = (URL(endpoint).openConnection() as java.net.HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 5_000
+            readTimeout = 7_000
+            instanceFollowRedirects = true
+            useCaches = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "OSINT-Workbench/0.3 (public research app)")
+        }
+        try {
+            val status = connection.responseCode
+            val body = connection.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+            if (status !in 200..299 || body.isBlank()) return@withContext emptyList()
+            val root = JSONObject(body)
+            val results = mutableListOf<PublicProfileResult>()
+
+            val abstractUrl = root.optString("AbstractURL")
+            val abstractText = root.optString("AbstractText").trim()
+            if (abstractText.isNotBlank() && abstractUrl.startsWith("https://")) {
+                results += PublicProfileResult(
+                    provider = "DuckDuckGo Instant Answer",
+                    title = root.optString("Heading").ifBlank { query },
+                    description = abstractText.take(600),
+                    url = abstractUrl,
+                    confidence = 70
+                )
+            }
+
+            fun appendTopics(items: JSONArray, depth: Int = 0) {
+                if (depth > 2 || results.size >= limit) return
+                for (index in 0 until items.length()) {
+                    if (results.size >= limit) break
+                    val item = items.optJSONObject(index) ?: continue
+                    val nested = item.optJSONArray("Topics")
+                    if (nested != null) {
+                        appendTopics(nested, depth + 1)
+                        continue
+                    }
+                    val url = item.optString("FirstURL")
+                    val text = item.optString("Text").trim()
+                    if (text.isNotBlank() && url.startsWith("https://")) {
+                        results += PublicProfileResult(
+                            provider = "DuckDuckGo Instant Answer",
+                            title = text.substringBefore(" - ").take(200).ifBlank { query },
+                            description = text.take(600),
+                            url = url,
+                            confidence = 62
+                        )
+                    }
+                }
+            }
+
+            appendTopics(root.optJSONArray("Results") ?: JSONArray())
+            appendTopics(root.optJSONArray("RelatedTopics") ?: JSONArray())
+            results.distinctBy { canonicalUrl(it.url) }.take(limit)
+        } catch (_: Exception) {
+            emptyList()
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private suspend fun searchDuckDuckGo(query: String, limit: Int): List<PublicProfileResult> =

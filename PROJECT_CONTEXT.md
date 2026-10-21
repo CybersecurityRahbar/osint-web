@@ -601,7 +601,7 @@
 - اكتمل تشغيل Android CI رقم `39671719126` على `main`، commit `2fef12aee05ed36d52b8e642bd5c65acf8c88c8b`، بالنتيجة `success`.
 - نجحت على وجه التحديد خطوات `Run unit tests` و`Build debug APK` و`Upload debug APK` و`Explain APK download and installation`.
 - artifact الحالي: `osint-workbench-v0.5-preview-apk`، ID `12380656241`، run `39671719126`. تنزيل Actions نفسه ZIP، لذلك جرى استخلاص `app-debug.apk` منه وفحص ZIP الخارجي والداخلي دون أخطاء.
-- APK المستخلص حجمه 20,073,xxx bytes تقريباً، SHA-256: `3317ab23ba980083cb7971a31546f623195cb25e192c8f25d12e22db1f3d6864`.
+- APK المستخلص حجمه 20,104,716 bytes بالضبط، SHA-256: `3317ab23ba980083cb7971a31546f623195cb25e192c8f25d12e22db1f3d6864`.
 - فُحص AndroidManifest داخل APK فعلياً: `versionName=0.5.0-preview`، `versionCode=5`، `applicationId=com.cyberphantom.osintworkbench.preview050`، `minSdk=26`، `targetSdk=36`، واسم التطبيق `OSINT Workbench Preview 0.5`. كما عُثر على APK signing block؛ فحص الملف البنيوي لا يعادل اختبار التثبيت على جهاز مادي.
 - أنشئت نسخة APK مباشرة من artifact للتحميل الفردي داخل مخرجات المحادثة. هذا يتجاوز ضرورة استخراج ZIP يدوياً على هاتف المستخدم.
 - ملف `ALKASER_OSINT.py` لم يُعدّل. تغيير package suffix يخص Debug Preview فقط ولا يغير application ID الأصلي.

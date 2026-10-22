@@ -19,13 +19,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.OpenInNew
@@ -74,7 +67,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class ResearchMode { IDENTIFIERS, NEWS, PRIVATE_SOURCES }
-private enum class TelegramLookupKind { NUMBER, NAME }
 
 @Composable
 fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
@@ -82,7 +74,6 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     val automatedSearch = remember { AdvancedPublicSearchEngine() }
     val scope = rememberCoroutineScope()
     val uriHandler = LocalUriHandler.current
-    var telegramLookupKind by rememberSaveable { mutableStateOf(TelegramLookupKind.NUMBER) }
     var mode by rememberSaveable { mutableStateOf(ResearchMode.IDENTIFIERS) }
     var kind by rememberSaveable { mutableStateOf(IdentifierKind.NAME) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -102,7 +93,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
     ) {
         ResearchScreenHeading(
             "محرك البحث المفتوح",
-            "أسماء ومعرّفات عامة وأخبار متعددة المصادر",
+            "معرّفات عامة وأخبار ومصادر خاصة عبر Telegram",
             Icons.Filled.PersonSearch
         )
 
@@ -449,12 +440,7 @@ fun PublicResearchScreen(store: LocalStore, onSaved: () -> Unit) {
                 }
             }
         } else {
-            PrivateTelegramSearchPanel(
-                kind = telegramLookupKind,
-                onKindChange = { telegramLookupKind = it },
-                query = query,
-                onQueryChange = { query = it }
-            )
+            PrivateSourcesSearchPanel()
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -606,156 +592,3 @@ private fun ResearchSectionHeader(title: String, subtitle: String) {
     }
 }
 
-
-@Composable
-private fun PrivateTelegramSearchPanel(
-    kind: TelegramLookupKind,
-    onKindChange: (TelegramLookupKind) -> Unit,
-    query: String,
-    onQueryChange: (String) -> Unit
-) {
-    val clipboard = LocalClipboardManager.current
-    var telegramWebView by remember { mutableStateOf<WebView?>(null) }
-    var pageStatus by remember { mutableStateOf("لم يتم التحقق من حالة Telegram Web بعد.") }
-    var copiedStatus by remember { mutableStateOf<String?>(null) }
-    val command = if (kind == TelegramLookupKind.NUMBER) "/search_by_number" else "/search_by_name"
-
-    Surface(
-        color = WorkbenchColors.Surface,
-        shape = RoundedCornerShape(21.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(WorkbenchColors.Teal.copy(alpha = 0.13f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    androidx.compose.material3.Icon(Icons.Filled.Public, contentDescription = null, tint = WorkbenchColors.Teal, modifier = Modifier.size(22.dp))
-                }
-                Column(Modifier.weight(1f)) {
-                    Text("المصادر الخاصة · Telegram", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("@Yemennumber_bot", color = WorkbenchColors.TextSecondary, fontSize = 11.sp)
-                }
-            }
-
-            Text("نوع البحث", fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = kind == TelegramLookupKind.NUMBER,
-                    onClick = { onKindChange(TelegramLookupKind.NUMBER); copiedStatus = null },
-                    label = { Text("بحث بالرقم") }
-                )
-                FilterChip(
-                    selected = kind == TelegramLookupKind.NAME,
-                    onClick = { onKindChange(TelegramLookupKind.NAME); copiedStatus = null },
-                    label = { Text("بحث بالاسم") }
-                )
-            }
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = { onQueryChange(it); copiedStatus = null },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                label = { Text(if (kind == TelegramLookupKind.NUMBER) "الرقم المطلوب" else "الاسم المطلوب") },
-                placeholder = { Text(if (kind == TelegramLookupKind.NUMBER) "أدخل الرقم مع رمز الدولة إن لزم" else "أدخل الاسم") },
-                colors = researchFieldColors()
-            )
-
-            Text(
-                "هذا الإصدار يفتح Telegram Web داخل القسم ويحتفظ بجلسة الويب محلياً. أرسل الأمر أولاً يدوياً، وانتظر رسالة البوت التي تطلب الرقم أو الاسم، ثم أرسل قيمة البحث؛ ستظهر الاستجابة في نافذة Telegram أدناه.",
-                color = WorkbenchColors.TextSecondary,
-                fontSize = 11.sp,
-                lineHeight = 18.sp
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = {
-                        clipboard.setText(AnnotatedString(command))
-                        copiedStatus = "تم نسخ الأمر: $command"
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = WorkbenchColors.Teal, contentColor = Color(0xFF06231F))
-                ) { Text("نسخ الأمر", fontSize = 12.sp) }
-                Button(
-                    onClick = {
-                        if (query.isBlank()) {
-                            copiedStatus = "أدخل قيمة البحث أولاً."
-                        } else {
-                            clipboard.setText(AnnotatedString(query.trim()))
-                            copiedStatus = "تم نسخ قيمة البحث."
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = query.isNotBlank(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = WorkbenchColors.Blue, contentColor = Color.White)
-                ) { Text("نسخ القيمة", fontSize = 12.sp) }
-            }
-
-            Button(
-                onClick = {
-                    telegramWebView?.loadUrl("https://web.telegram.org/k/#@Yemennumber_bot")
-                    pageStatus = if (telegramWebView == null) "يجري إعداد نافذة Telegram؛ حاول ثانية بعد ظهورها."
-                    else "تم طلب فتح محادثة @Yemennumber_bot."
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = WorkbenchColors.SurfaceElevated, contentColor = WorkbenchColors.TextPrimary)
-            ) {
-                androidx.compose.material3.Icon(Icons.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("الانتقال إلى محادثة البوت")
-            }
-
-            if (copiedStatus != null) {
-                Text(copiedStatus.orEmpty(), fontSize = 11.sp, color = WorkbenchColors.Teal)
-            }
-            Text(pageStatus, fontSize = 10.sp, color = WorkbenchColors.TextSecondary)
-
-            Surface(
-                modifier = Modifier.fillMaxWidth().height(560.dp),
-                color = Color(0xFF0B1015),
-                shape = RoundedCornerShape(14.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
-            ) {
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = { context ->
-                        WebView(context).apply {
-                            settings.javaScriptEnabled = true
-                            settings.domStorageEnabled = true
-                            settings.databaseEnabled = true
-                            settings.loadsImagesAutomatically = true
-                            CookieManager.getInstance().setAcceptCookie(true)
-                            webViewClient = object : WebViewClient() {
-                                override fun onPageFinished(view: WebView, url: String) {
-                                    pageStatus = if (url.contains("web.telegram.org")) {
-                                        "Telegram Web مفتوح. سجّل الدخول مرة واحدة إذا ظهرت شاشة الدخول."
-                                    } else {
-                                        "تم تحميل صفحة الويب."
-                                    }
-                                }
-                            }
-                            webChromeClient = WebChromeClient()
-                            telegramWebView = this
-                            loadUrl("https://web.telegram.org/k/#@Yemennumber_bot")
-                        }
-                    },
-                    update = { view ->
-                        if (telegramWebView !== view) telegramWebView = view
-                    }
-                )
-            }
-            Text(
-                "قد يطلب Telegram تسجيل الدخول مجدداً إذا انتهت الجلسة أو مُسحت بيانات التطبيق.",
-                fontSize = 10.sp,
-                color = WorkbenchColors.TextSecondary,
-                lineHeight = 16.sp
-            )
-        }
-    }
-}

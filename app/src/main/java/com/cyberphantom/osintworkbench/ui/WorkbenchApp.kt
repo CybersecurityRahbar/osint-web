@@ -1167,13 +1167,14 @@ private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: 
             Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
                 SettingRow(Icons.Filled.Storage, "قاعدة البيانات", "SQLite محلية داخل مساحة التطبيق", WorkbenchColors.Teal)
                 HorizontalDivider(color = WorkbenchColors.Border)
-                SettingRow(Icons.Filled.Lock, "الاتصال بالخادم", "لا يوجد خادم خاص أو حساب مستخدم", WorkbenchColors.Blue)
+                SettingRow(Icons.Filled.Lock, "الاتصال الخارجي", "لا يوجد خادم خاص؛ جلسة Telegram اختيارية داخل التطبيق", WorkbenchColors.Blue)
                 HorizontalDivider(color = WorkbenchColors.Border)
                 SettingRow(Icons.Filled.Security, "نمط الاستطلاع", "استعلامات عامة سلبية فقط في هذا الإصدار", WorkbenchColors.Violet)
                 HorizontalDivider(color = WorkbenchColors.Border)
                 SettingRow(Icons.Filled.Language, "المصادر الحالية", "Google Public DNS و crt.sh اختيارياً", WorkbenchColors.Amber)
             }
         }
+        PrivateSourcesSettingsPanel()
         SectionHeader("حالة مساحة العمل", "إحصاءات قاعدة البيانات على الجهاز")
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             InfoLine("الكيانات", stats.entities.toString())

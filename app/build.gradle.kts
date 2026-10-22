@@ -3,6 +3,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val previewKeystorePath = providers.environmentVariable("PREVIEW_KEYSTORE_PATH").orNull?.takeIf { it.isNotBlank() }
+val previewKeystorePassword = providers.environmentVariable("PREVIEW_KEYSTORE_PASSWORD").orNull?.takeIf { it.isNotBlank() }
+val previewKeyAlias = providers.environmentVariable("PREVIEW_KEY_ALIAS").orNull?.takeIf { it.isNotBlank() } ?: "osint-preview"
+val hasStablePreviewSigning = previewKeystorePath != null && previewKeystorePassword != null
+
 android {
     namespace = "com.cyberphantom.osintworkbench"
     compileSdk = 36
@@ -12,18 +17,32 @@ android {
         manifestPlaceholders["appLabel"] = "OSINT Workbench"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.5.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // CI debug APKs are signed with ephemeral debug keys. Use a separate package ID
-    // so a new preview can be installed alongside an older app without replacing its data.
+    if (hasStablePreviewSigning) {
+        signingConfigs.create("previewStable") {
+            storeFile = file(previewKeystorePath!!)
+            storePassword = previewKeystorePassword
+            keyAlias = previewKeyAlias
+            keyPassword = previewKeystorePassword
+            storeType = "pkcs12"
+        }
+    }
+
+    // Preview releases all use this same package ID and stable signing key.
+    // The previous .preview050 test build used a temporary CI key, so .preview051
+    // is a one-time side-by-side transition; future v0.5.1+ builds update in place.
     buildTypes {
         getByName("debug") {
-            applicationIdSuffix = ".preview050"
+            applicationIdSuffix = ".preview051"
             versionNameSuffix = "-preview"
-            manifestPlaceholders["appLabel"] = "OSINT Workbench Preview 0.5"
+            if (hasStablePreviewSigning) {
+                signingConfig = signingConfigs.getByName("previewStable")
+            }
+            manifestPlaceholders["appLabel"] = "OSINT Workbench Preview 0.5.1"
         }
     }
 

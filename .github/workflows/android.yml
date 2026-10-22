@@ -18,6 +18,10 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      PREVIEW_KEYSTORE_BASE64: ${{ secrets.PREVIEW_KEYSTORE_BASE64 }}
+      PREVIEW_KEYSTORE_PASSWORD: ${{ secrets.PREVIEW_KEYSTORE_PASSWORD }}
+      PREVIEW_KEY_ALIAS: osint-preview
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,25 +46,50 @@ jobs:
       - name: Run unit tests
         run: gradle testDebugUnitTest --stacktrace
 
+      - name: Prepare stable preview signing
+        if: ${{ env.PREVIEW_KEYSTORE_BASE64 != '' && env.PREVIEW_KEYSTORE_PASSWORD != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYSTORE_FILE="$RUNNER_TEMP/osint-workbench-preview.p12"
+          printf '%s' "$PREVIEW_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_FILE"
+          chmod 600 "$KEYSTORE_FILE"
+          keytool -list -storetype PKCS12 -keystore "$KEYSTORE_FILE" \
+            -storepass "$PREVIEW_KEYSTORE_PASSWORD" -alias "$PREVIEW_KEY_ALIAS" >/dev/null
+          echo "PREVIEW_KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+          echo "Stable preview signing key is configured."
+
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
 
-      - name: Upload debug APK
+      - name: Upload stable-signed preview APK
+        if: ${{ env.PREVIEW_KEYSTORE_BASE64 != '' && env.PREVIEW_KEYSTORE_PASSWORD != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: osint-workbench-v0.5-preview-apk
+          name: osint-workbench-v0.5.1-preview-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
+
       - name: Explain APK download and installation
-        if: success()
+        if: ${{ success() && env.PREVIEW_KEYSTORE_BASE64 != '' && env.PREVIEW_KEYSTORE_PASSWORD != '' }}
         run: |
           {
-            echo "## OSINT Workbench v0.5 preview"
+            echo "## OSINT Workbench v0.5.1 preview"
             echo ""
-            echo "- The artifact named `osint-workbench-v0.5-preview-apk` downloads as a ZIP file."
-            echo "- Extract `app-debug.apk` from that ZIP, then install the APK on Android."
-            echo "- Preview application ID: `com.cyberphantom.osintworkbench.preview050`."
-            echo "- This preview is intentionally separate from the original app and older preview packages."
-            echo "- CI success confirms unit tests and APK packaging; live search-provider behavior still requires device testing."
+            echo "- Artifact: `osint-workbench-v0.5.1-preview-apk` (ZIP containing `app-debug.apk`)."
+            echo "- Preview application ID: `com.cyberphantom.osintworkbench.preview051`."
+            echo "- This preview is signed with the stable `osint-preview` key. Keep the two signing secrets unchanged for every future update."
+            echo "- The earlier `.preview050` app remains installed alongside this transition build; because that older APK was signed with an ephemeral key, its session cannot be transferred by an in-place update."
+            echo "- CI verifies unit tests and packaging, but Telegram Web automation must still be tested on the actual phone."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Explain stable signing setup is required for downloadable updates
+        if: ${{ success() && (env.PREVIEW_KEYSTORE_BASE64 == '' || env.PREVIEW_KEYSTORE_PASSWORD == '') }}
+        run: |
+          {
+            echo "## Tests passed; stable APK artifact not published"
+            echo ""
+            echo "Add repository Actions secrets PREVIEW_KEYSTORE_BASE64 and PREVIEW_KEYSTORE_PASSWORD, then run this workflow again."
+            echo "The APK was built with a temporary debug key only to check compilation; it was intentionally not uploaded so it cannot be mistaken for an updateable release."
           } >> "$GITHUB_STEP_SUMMARY"

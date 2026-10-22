@@ -2,7 +2,7 @@
 
 **OSINT Workbench** is an offline-first Android OSINT workbench for collecting publicly available information, preserving evidence, and building explainable technical relationships without a private backend or a bundled large language model.
 
-> **Prototype status: v0.5.0-preview.** It is an actively developed prototype, not a complete replacement for SpiderFoot, Maltego, or a dedicated vulnerability scanner.
+> **Prototype status: v0.5.1-preview.** It is an actively developed prototype, not a complete replacement for SpiderFoot, Maltego, or a dedicated vulnerability scanner.
 
 ## Domain intelligence
 
@@ -58,7 +58,7 @@
 - Live collection needs network access. Carrier, country, DNS, source, and rate-limit restrictions may still cause empty results.
 - Automatic identifier lookup is based on public indexes and permitted public APIs, not on a universal, authoritative phone-owner database. A zero-result response does not prove that information does not exist.
 - The app's SQLite database **is not encrypted at rest yet**; avoid storing highly sensitive data in the prototype.
-- GitHub Actions builds a **v0.5 debug preview** with application ID `com.cyberphantom.osintworkbench.preview050`, so it can be installed beside both the original `com.cyberphantom.osintworkbench` app and older `.preview` builds. This version-specific ID avoids Android signature-conflict errors when GitHub-hosted debug keys change between CI runs. The downloaded GitHub Actions artifact is a ZIP containing `app-debug.apk`; install that APK, not the ZIP itself. The original application/database is not replaced.
+- GitHub Actions builds the **v0.5.1 stable-signed preview channel** with application ID `com.cyberphantom.osintworkbench.preview051`. Future preview builds keep this same application ID and signing certificate, allowing Android to update the app in place without clearing its WebView session or local app data. The older `.preview050` prototype used a temporary CI key, so this first transition is intentionally installed side-by-side; keep that older app until the new one is verified and any local data has been exported/imported. Configure the two GitHub Actions secrets `PREVIEW_KEYSTORE_BASE64` and `PREVIEW_KEYSTORE_PASSWORD` as documented in [Stable preview signing](docs/STABLE_PREVIEW_SIGNING.md). CI does not publish an APK artifact until stable signing is configured. The downloadable artifact is a ZIP containing `app-debug.apk`; install the APK, not the ZIP itself.
 - CI verifies compilation/tests and APK packaging; it does not validate each source's live response on every carrier or phone.
 
 ## Search-engine reference
@@ -76,7 +76,7 @@ Requirements: JDK 17 and Android SDK API 36. The Gradle Wrapper downloads the pi
 
 APK output: `app/build/outputs/apk/debug/app-debug.apk`
 
-GitHub Actions runs unit tests, builds a debug APK, and uploads `osint-workbench-debug-apk`.
+GitHub Actions runs unit tests and builds the preview APK. It uploads `osint-workbench-v0.5.1-preview-apk` only when the stable signing secrets are configured; otherwise it deliberately publishes no installable artifact.
 
 ## Cumulative context
 

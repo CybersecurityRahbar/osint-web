@@ -694,3 +694,11 @@
 - سجل المصدر تغيّر عبر commit `b8b15d43b3b5522a030a7cf5ec52b21889a253f3`، بعنوان `Add private Telegram Web section to public research screen`.
 - بدأ Android CI run رقم 329، ID `39789861610`, على commit المذكور. كانت حالته `in_progress` عند تسجيل هذه الملاحظة؛ لا يُسجّل نجاح البناء قبل قراءة النتيجة النهائية. رابط التشغيل: https://github.com/CybersecurityRahbar/osint-web/actions/runs/39789861610
 - محاولة تحديث ملف السياق الطويلة السابقة رُفضت بواسطة فحص الأداة. لا يثبت هذا بمفرده وجود مشكلة في صلاحيات GitHub أو المستودع؛ نجح تحديث ملف Kotlin لاحقاً عبر GitHub Contents API. لا يمكن تحديد السبب الداخلي الدقيق لرفض المحاولة السابقة من رسالة الخطأ وحدها.
+
+
+### نتيجة التحقق النهائية من بناء قسم Telegram Web — 2026-10-22
+- اكتمل Android CI run رقم 330، ID `39789993705`, على commit `a6ba6354f6864e787dfa6dde3f9d511fb2d5d47f` بنتيجة `success`.
+- نجحت خطوات `Run unit tests` و`Build debug APK` و`Upload debug APK` و`Explain APK download and installation`.
+- artifact: `osint-workbench-v0.5-preview-apk`, ID `12431091524`, حجم ZIP `19,470,631 bytes`, digest الخاص بملف ZIP `sha256:6bc9e41e11a6d47839bcd222958921ba4ca10fb325e5cf2c9da3ccc414d43a13`. انتهت/تنتهي صلاحية artifact في `2026-11-05T13:49:42Z`.
+- تم تنزيل ZIP وفك ضغطه وفحص سلامة الـ APK الداخلي: `app-debug.apk` بحجم `20,121,100 bytes`، وبصمة SHA-256: `37ccf47ab2592c43cd38027defee2c5ddacc6431f5e5f8e917e26d7e1923a973`. اجتاز اختبار سلامة ZIP الداخلي، لكن هذا لا يثبت أن Telegram Web يعمل على جهاز مادي.
+- الملف المنفرد الناتج داخل مخرجات جلسة العمل: `/mnt/data/OSINT_Workbench_v0.5_preview_private_sources.apk`. لم يُختبر تثبيته أو تسجيل الدخول إلى Telegram على هاتف المستخدم حتى الآن.

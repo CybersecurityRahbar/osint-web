@@ -1,5 +1,6 @@
 package com.cyberphantom.osintworkbench.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -1158,47 +1159,92 @@ private fun CasesScreen(cases: List<CaseRow>, store: LocalStore, onSaved: () -> 
 
 @Composable
 private fun SettingsScreen(stats: StoreStats, store: LocalStore, onDataChanged: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        ScreenHeading("الإعدادات والخصوصية", "شفافية البيانات وطريقة عمل النظام", Icons.Filled.Settings)
-        Surface(color = WorkbenchColors.Surface, shape = RoundedCornerShape(22.dp), border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)) {
-            Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-                SettingRow(Icons.Filled.Storage, "قاعدة البيانات", "SQLite محلية داخل مساحة التطبيق", WorkbenchColors.Teal)
-                HorizontalDivider(color = WorkbenchColors.Border)
-                SettingRow(Icons.Filled.Lock, "الاتصال الخارجي", "لا يوجد خادم خاص؛ جلسة Telegram اختيارية داخل التطبيق", WorkbenchColors.Blue)
-                HorizontalDivider(color = WorkbenchColors.Border)
-                SettingRow(Icons.Filled.Security, "نمط الاستطلاع", "استعلامات عامة سلبية فقط في هذا الإصدار", WorkbenchColors.Violet)
-                HorizontalDivider(color = WorkbenchColors.Border)
-                SettingRow(Icons.Filled.Language, "المصادر الحالية", "Google Public DNS و crt.sh اختيارياً", WorkbenchColors.Amber)
-            }
-        }
-        PrivateSourcesSettingsPanel()
-        SectionHeader("حالة مساحة العمل", "إحصاءات قاعدة البيانات على الجهاز")
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            InfoLine("الكيانات", stats.entities.toString())
-            InfoLine("العلاقات", stats.relationships.toString())
-            InfoLine("الأدلة", stats.findings.toString())
-            InfoLine("عمليات الجمع", stats.scans.toString())
-            InfoLine("الحالات", stats.cases.toString())
-        }
-        DataManagementPanel(store, onImported = onDataChanged)
-        Surface(color = Color(0xFF30291A), shape = RoundedCornerShape(18.dp), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5A4A2B))) {
-            Row(Modifier.padding(15.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                androidx.compose.material3.Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = WorkbenchColors.Amber)
-                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Text("ملاحظة أمنية", color = WorkbenchColors.Amber, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    Text(
-                        "البيانات محفوظة محلياً، لكن تشفير قاعدة البيانات والنسخ الاحتياطي المشفّر لم يُنفّذا بعد. لا تخزّن أسراراً شديدة الحساسية في هذا الإصدار الأولي.",
-                        color = Color(0xFFE4D6B5),
-                        fontSize = 11.sp,
-                        lineHeight = 18.sp
-                    )
+    var openPrivateSources by rememberSaveable { mutableStateOf(false) }
+    BackHandler(enabled = openPrivateSources) { openPrivateSources = false }
+
+    if (openPrivateSources) {
+        PrivateSourcesSettingsPanel(onBack = { openPrivateSources = false })
+    } else {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            ScreenHeading("الإعدادات والخصوصية", "شفافية البيانات وطريقة عمل النظام", Icons.Filled.Settings)
+            Surface(
+                color = WorkbenchColors.Surface,
+                shape = RoundedCornerShape(22.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
+            ) {
+                Column(Modifier.padding(17.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
+                    SettingRow(Icons.Filled.Storage, "قاعدة البيانات", "SQLite محلية داخل مساحة التطبيق", WorkbenchColors.Teal)
+                    HorizontalDivider(color = WorkbenchColors.Border)
+                    SettingRow(Icons.Filled.Lock, "الاتصال الخارجي", "لا يوجد خادم خاص؛ جلسة Telegram اختيارية داخل التطبيق", WorkbenchColors.Blue)
+                    HorizontalDivider(color = WorkbenchColors.Border)
+                    SettingRow(Icons.Filled.Security, "نمط الاستطلاع", "استعلامات عامة سلبية فقط في هذا الإصدار", WorkbenchColors.Violet)
+                    HorizontalDivider(color = WorkbenchColors.Border)
+                    SettingRow(Icons.Filled.Language, "المصادر الحالية", "Google Public DNS و crt.sh اختيارياً", WorkbenchColors.Amber)
                 }
             }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).clickable { openPrivateSources = true },
+                color = WorkbenchColors.Surface,
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, WorkbenchColors.Border)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(13.dp)
+                ) {
+                    Box(
+                        Modifier.size(44.dp).clip(RoundedCornerShape(14.dp)).background(WorkbenchColors.Teal.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        androidx.compose.material3.Icon(Icons.Filled.Public, contentDescription = null, tint = WorkbenchColors.Teal, modifier = Modifier.size(23.dp))
+                    }
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("إعداد المصادر الخاصة", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "إدارة بوتات البحث وتسجيل الدخول إلى Telegram",
+                            fontSize = 11.sp,
+                            color = WorkbenchColors.TextSecondary,
+                            lineHeight = 16.sp
+                        )
+                    }
+                    androidx.compose.material3.Icon(Icons.Filled.ArrowForward, contentDescription = "فتح", tint = WorkbenchColors.Teal)
+                }
+            }
+
+            SectionHeader("حالة مساحة العمل", "إحصاءات قاعدة البيانات على الجهاز")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                InfoLine("الكيانات", stats.entities.toString())
+                InfoLine("العلاقات", stats.relationships.toString())
+                InfoLine("الأدلة", stats.findings.toString())
+                InfoLine("عمليات الجمع", stats.scans.toString())
+                InfoLine("الحالات", stats.cases.toString())
+            }
+            DataManagementPanel(store, onImported = onDataChanged)
+            Surface(
+                color = Color(0xFF30291A),
+                shape = RoundedCornerShape(18.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5A4A2B))
+            ) {
+                Row(Modifier.padding(15.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    androidx.compose.material3.Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = WorkbenchColors.Amber)
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("ملاحظة أمنية", color = WorkbenchColors.Amber, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text(
+                            "البيانات محفوظة محلياً، لكن تشفير قاعدة البيانات والنسخ الاحتياطي المشفّر لم يُنفّذا بعد. لا تخزّن أسراراً شديدة الحساسية في هذا الإصدار الأولي.",
+                            color = Color(0xFFE4D6B5),
+                            fontSize = 11.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                }
+            }
+            Text("OSINT Workbench · 0.5.2 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
         }
-        Text("OSINT Workbench · 0.5.0 · Preview build", color = WorkbenchColors.TextSecondary, fontSize = 10.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
     }
 }
 

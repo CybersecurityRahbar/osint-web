@@ -66,7 +66,7 @@ jobs:
         if: ${{ env.PREVIEW_KEYSTORE_BASE64 != '' && env.PREVIEW_KEYSTORE_PASSWORD != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: osint-workbench-v0.5.1-preview-apk
+          name: osint-workbench-v0.5.2-preview-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -75,9 +75,9 @@ jobs:
         if: ${{ success() && env.PREVIEW_KEYSTORE_BASE64 != '' && env.PREVIEW_KEYSTORE_PASSWORD != '' }}
         run: |
           {
-            echo "## OSINT Workbench v0.5.1 preview"
+            echo "## OSINT Workbench v0.5.2 preview"
             echo ""
-            echo "- Artifact: `osint-workbench-v0.5.1-preview-apk` (ZIP containing `app-debug.apk`)."
+            echo "- Artifact: `osint-workbench-v0.5.2-preview-apk` (ZIP containing `app-debug.apk`)."
             echo "- Preview application ID: `com.cyberphantom.osintworkbench.preview051`."
             echo "- This preview is signed with the stable `osint-preview` key. Keep the two signing secrets unchanged for every future update."
             echo "- The earlier `.preview050` app remains installed alongside this transition build; because that older APK was signed with an ephemeral key, its session cannot be transferred by an in-place update."

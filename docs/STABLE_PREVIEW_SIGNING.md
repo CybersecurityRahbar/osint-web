@@ -13,7 +13,7 @@ In the repository on GitHub:
    - `PREVIEW_KEYSTORE_BASE64`: paste the complete contents of the separately supplied `OSINT_PREVIEW_KEYSTORE_BASE64.txt` file. Paste the Base64 text only.
    - `PREVIEW_KEYSTORE_PASSWORD`: paste the exact password from the separately supplied `OSINT_PREVIEW_KEYSTORE_PASSWORD.txt` file, with no extra spaces or newline.
 3. Keep these two secrets unchanged for all future preview releases. The alias is fixed as `osint-preview`; the key password is the same as the keystore password.
-4. Open **Actions → Android CI → Run workflow → main**. After tests and packaging pass, download the artifact named `osint-workbench-v0.5.1-preview-apk` and extract `app-debug.apk`.
+4. Open **Actions → Android CI → Run workflow → main**. After tests and packaging pass, download the artifact named `osint-workbench-v0.5.2-preview-apk` and extract `app-debug.apk`.
 
 If either secret is missing or incorrect, CI may run tests/build checks but deliberately does not upload a downloadable APK. This prevents a temporary debug-signed APK from being mistaken for an updateable release.
 
@@ -28,4 +28,4 @@ Keep the old app installed until the new channel is checked. Its existing sessio
 - Keep the preview `applicationIdSuffix` as `.preview051`.
 - Keep the two signing secrets unchanged and private.
 - Increase `versionCode` and update `versionName` when publishing a newer build.
-- Do not download/install an artifact from an Actions run that did not upload `osint-workbench-v0.5.1-preview-apk`.
+- Do not download/install an artifact from an Actions run that did not upload `osint-workbench-v0.5.2-preview-apk`.
